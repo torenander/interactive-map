@@ -1,7 +1,7 @@
 // Bottom sheet for rating + commenting on an area. SPEC.md § Field UX: dismissible with
 // one thumb, and dismissing must not lose the drawn geometry — this component only ever
 // reports "dismiss" up to MapShell, which decides what that means for the pending draw.
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 export type RatingModalMode = "create" | "edit";
 
@@ -35,13 +35,35 @@ export default function RatingModal({
   const [rating, setRating] = useState(initialRating);
   const [comment, setComment] = useState(initialComment);
 
+  // WebKit ghost-click guard (verified touch bug, field-blocking): finishing a polygon
+  // by tapping its closing vertex fires touchstart/touchend, and this modal mounts
+  // synchronously in Terra Draw's `finish` handler while that same tap is still
+  // in flight. WebKit then synthesizes a trailing mouse/click event from that tap
+  // a few ms later, and if it lands on the just-mounted backdrop it dismisses the
+  // modal instantly — the user only sees a flash. Click events carry the
+  // originating gesture's timestamp in `event.timeStamp` (not the dispatch time of
+  // the synthesized click), so any click whose timeStamp predates this component's
+  // mount must be a leftover from the gesture that opened the modal, not a real tap
+  // on the backdrop after it settled — ignore it. A small epsilon absorbs mount
+  // being captured a tick after the originating touch's timestamp. Genuine
+  // backdrop taps (this ref is set once, on mount, and never moves) are always far
+  // enough after mount that this never affects normal dismiss-preserves-geometry
+  // behaviour.
+  const mountTimeRef = useRef(performance.now());
+  const GHOST_CLICK_EPSILON_MS = 50;
+
+  function handleBackdropDismiss(event: { timeStamp: number }) {
+    if (event.timeStamp < mountTimeRef.current + GHOST_CLICK_EPSILON_MS) return;
+    onDismiss();
+  }
+
   return (
     <div className="fixed inset-0 z-40" data-testid="rating-modal">
       {/* Backdrop — tapping it dismisses without discarding the drawn geometry. */}
       <button
         type="button"
         aria-label="Dismiss"
-        onClick={onDismiss}
+        onClick={handleBackdropDismiss}
         className="absolute inset-0 h-full w-full bg-black/30"
       />
 
