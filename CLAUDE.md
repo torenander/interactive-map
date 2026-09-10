@@ -12,11 +12,12 @@ MapLibre GL JS, Protomaps pmtiles, Terra Draw, Vite, React, TypeScript, Tailwind
 - Never tick a task box for work you have not watched run.
 - Do not build anything under a goal's `out_of_scope` or under "Not goals".
 - `areas.geom` is the source of truth; `area_cells` is derived. If they disagree, rebuild the cells from geometry.
-- All writes to `areas` go through the `save-area` edge function — the one place cells are derived (h3-js, server side). Never write `areas` or `area_cells` directly from the client; deletes of whole areas are the only direct call (FK cascade cleans cells).
+- All writes to `areas` go through the `save-area` edge function — the one place cells are derived (h3-js, server side). Direct client writes are revoked at the database (migration 0007); deletes of whole areas are the only direct call (FK cascade cleans cells).
 - `dimension` stays `'overall'`. No rating-dimension UI.
 - `rating` is -2..2 in the database; the UI emits only -1, 0, +1.
 - No geometry union, clipping or self-intersection repair. Overlap is a rendering concern: semi-transparent, newest on top.
 - Schema changes go through `supabase/migrations/`, never the Supabase dashboard. Regenerate `src/db/types.ts` after every migration.
+- After editing `supabase/functions/*`, recycle with `npx supabase stop && npx supabase start` — the local edge runtime keeps the old module loaded and silently serves stale code otherwise.
 - RLS is enabled in the migration that creates a table, not later.
 - Mobile viewport 390x844 is the primary target. Verify there before desktop.
 - Never render a save as complete before the server has it. Offline writes queue in IndexedDB under a client-generated uuid.
