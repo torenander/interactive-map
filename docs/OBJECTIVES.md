@@ -111,10 +111,20 @@ Installable on iOS and Android, London tiles served from cache, map usable with 
 **done_when**
 ```
 npm run build
-npx lighthouse http://localhost:4173 --only-categories=pwa --output=json --quiet | node scripts/assert-pwa.mjs
+node scripts/assert-pwa.mjs
 npm run test:e2e -- tests/e2e/offline-map.spec.ts
 ```
-`assert-pwa.mjs` exits non-zero unless the installability audits pass.
+> **Check amended 2026-09-10 (lead):** the original command piped
+> `npx lighthouse --only-categories=pwa` into `assert-pwa.mjs`, but Lighthouse removed
+> the PWA category in v12 (current is 13.4.1: accessibility, best-practices,
+> performance, seo, agentic-browsing) — the command cannot execute at all, on any
+> machine. Not weakened to pass: replaced with a direct probe that is stricter than
+> the old audit. `assert-pwa.mjs` must launch the built app itself (preview on 4173),
+> and exit non-zero unless: the manifest link resolves and contains name, start_url,
+> display standalone/fullscreen, and icons at 192 and 512; a service worker controls
+> the page after first load; and a reload with the network blocked still serves the
+> app shell. The old Lighthouse audit never verified actual offline behaviour; this
+> does.
 `offline-map.spec.ts` asserts the map renders tiles with the network blocked after one warm load.
 
 **out_of_scope**
