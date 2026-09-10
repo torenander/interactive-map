@@ -63,16 +63,18 @@ need it are flagged; they are authored regardless and verified as soon as Docker
 - [ ] **Step 2:** `npx supabase gen types typescript --local > src/db/types.ts`.
 - [ ] **Step 3:** Commit — `chore: generate database types`.
 
-## [ ] Task 7 — Typed Supabase client with email auth
+## [~] Task 7 — Typed Supabase client with email auth
 
-- [ ] **Step 1:** `npm install @supabase/supabase-js`.
-- [ ] **Step 2:** `src/db/client.ts` — `createClient<Database>(...)` reading
+- [x] **Step 1:** `npm install @supabase/supabase-js`.
+- [x] **Step 2:** `src/db/client.ts` — `createClient<Database>(...)` reading
       `import.meta.env.VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`, plus
       `signUpWithEmail(email, password)`, `signInWithEmail(email, password)`, `signOut()`
       wrapping `supabase.auth.*`. No UI.
-- [ ] **Step 3:** Commit — `feat: typed Supabase client with email auth`.
+- [x] **Step 3:** Commit — `feat: typed Supabase client with email auth`.
+- Note: `src/db/types.ts` is a hand-authored placeholder (Docker unavailable — see Task 6).
+  `npx tsc -b` passes against it. Not yet exercised against a live Supabase auth backend.
 
-## [ ] Task 8 — schema.test.ts (needs Docker)
+## [~] Task 8 — schema.test.ts (needs Docker)
 
 Assertions required by `docs/OBJECTIVES.md` § G2, against a local Supabase instance:
 - inserting an area populates `area_cells` with >= 1 row
@@ -81,10 +83,14 @@ Assertions required by `docs/OBJECTIVES.md` § G2, against a local Supabase inst
 - deleting an area cascades to its cells
 - a second user's `select` on another user's area returns zero rows
 
-- [ ] **Step 1:** `tests/unit/schema.test.ts` using the service-role key (bypasses RLS) for setup
-      and two distinct authenticated clients for the RLS-isolation assertion.
-- [ ] **Step 2:** `npm run test -- tests/unit/schema.test.ts` green against local DB.
-- [ ] **Step 3:** Commit — `test: schema constraints and RLS isolation`.
+- [x] **Step 1:** `tests/unit/schema.test.ts` using the service-role key (bypasses RLS) for setup
+      and two distinct authenticated clients for the RLS-isolation assertion. Reads
+      connection details from `supabase status -o env` rather than hardcoding keys.
+- [ ] **Step 2 (needs Docker):** `npm run test -- tests/unit/schema.test.ts` green against local
+      DB — NOT RUN. Confirmed it runs and fails cleanly with an actionable error
+      (`Could not read supabase status -o env ... no such container`) rather than an
+      assertion-free pass, since Docker is down at authoring time.
+- [x] **Step 3:** Commit — `test: schema constraints and RLS isolation`.
 
 ## [ ] Task 9 — Close out G2
 
