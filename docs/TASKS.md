@@ -520,7 +520,7 @@ git commit -m "feat: render London basemap from local pmtiles archive"
 
 ---
 
-## [ ] Task 4 — Centre on me
+## [~] Task 4 — Centre on me
 
 **Files:**
 - Modify: `src/map/MapShell.tsx`
@@ -530,7 +530,7 @@ git commit -m "feat: render London basemap from local pmtiles archive"
 - Consumes: the `MapShell` component from Task 3, and the `geolocation` permission and pinned position from `playwright.config.ts` in Task 2.
 - Produces: a `areamap:geolocate` DOM `CustomEvent` on `window`, carrying `{ latitude, longitude }`, dispatched when MapLibre's `GeolocateControl` emits `geolocate`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Playwright's context already grants geolocation and pins the position to
 Charing Cross via `playwright.config.ts` from Task 2.
@@ -565,7 +565,7 @@ test('geolocate control sits in the bottom third of the viewport', async ({ page
 })
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 npm run test:e2e -- tests/e2e/map-shell.spec.ts
@@ -573,7 +573,7 @@ npm run test:e2e -- tests/e2e/map-shell.spec.ts
 
 Expected: two FAILs — no `.maplibregl-ctrl-geolocate` in the DOM.
 
-- [ ] **Step 3: Add the control**
+- [x] **Step 3: Add the control**
 
 Insert into the `useEffect` in `src/map/MapShell.tsx`, after the `new maplibregl.Map(...)`
 assignment and before the cleanup `return`:
@@ -597,7 +597,7 @@ assignment and before the cleanup `return`:
 
 `bottom-right` satisfies the thumb-reach constraint in `SPEC.md` § Field UX.
 
-- [ ] **Step 4: Lift the controls clear of the home indicator**
+- [x] **Step 4: Lift the controls clear of the home indicator**
 
 Append to `src/index.css`:
 
@@ -608,7 +608,7 @@ Append to `src/index.css`:
 }
 ```
 
-- [ ] **Step 5: Run the tests and the build**
+- [x] **Step 5: Run the tests and the build**
 
 ```bash
 npm run test:e2e -- tests/e2e/map-shell.spec.ts
@@ -617,7 +617,12 @@ npm run build
 
 Expected: six PASS, build exits 0.
 
-- [ ] **Step 6: Commit**
+> **Deviation.** maplibre-gl v6 types the payload as `GeolocatePositionEvent`
+> with `coords: GeolocationCoordinates` already on it, so the planned
+> `(e as GeolocationPosition).coords` cast does not compile and is not needed.
+> Use `e.coords` directly.
+
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A

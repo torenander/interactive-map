@@ -57,3 +57,31 @@ test('vector tiles decode and paint', async ({ page }) => {
   expect(await featureCount.jsonValue()).toBeGreaterThan(0)
   expect(pageErrors).toEqual([])
 })
+
+test('geolocate control fires a geolocate event with the mocked position', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.maplibregl-ctrl-geolocate')).toBeVisible()
+
+  const fired = page.evaluate(
+    () =>
+      new Promise<{ latitude: number; longitude: number }>((resolve) => {
+        window.addEventListener(
+          'areamap:geolocate',
+          (e) => resolve((e as CustomEvent).detail),
+          { once: true },
+        )
+      }),
+  )
+
+  await page.locator('.maplibregl-ctrl-geolocate').click()
+
+  const detail = await fired
+  expect(detail.latitude).toBeCloseTo(51.5072, 3)
+  expect(detail.longitude).toBeCloseTo(-0.1276, 3)
+})
+
+test('geolocate control sits in the bottom third of the viewport', async ({ page }) => {
+  await page.goto('/')
+  const box = await page.locator('.maplibregl-ctrl-geolocate').boundingBox()
+  expect(box!.y).toBeGreaterThan(844 * (2 / 3))
+})

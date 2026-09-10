@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { MapLibreMap, addProtocol, removeProtocol, setWorkerUrl } from 'maplibre-gl'
+import { GeolocateControl, MapLibreMap, addProtocol, removeProtocol, setWorkerUrl } from 'maplibre-gl'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { Protocol } from 'pmtiles'
 import { buildStyle, LONDON_CENTER, LONDON_ZOOM } from './style'
@@ -33,6 +33,23 @@ export default function MapShell() {
     // Exposed for end-to-end tests. The DOM alone cannot distinguish a working
     // map from a blank canvas, and that gap already shipped one silent failure.
     ;(window as unknown as { __map?: MapLibreMap }).__map = map.current
+
+    const geolocate = new GeolocateControl({
+      positionOptions: { enableHighAccuracy: true },
+      trackUserLocation: true,
+      showUserLocation: true,
+    })
+
+    geolocate.on('geolocate', (e) => {
+      const { latitude, longitude } = e.coords
+      window.dispatchEvent(
+        new CustomEvent('areamap:geolocate', { detail: { latitude, longitude } }),
+      )
+    })
+
+    // bottom-right keeps "centre on me" in thumb reach; SPEC.md § Field UX
+    // requires controls in the bottom third of the screen.
+    map.current.addControl(geolocate, 'bottom-right')
 
     return () => {
       map.current?.remove()
