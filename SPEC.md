@@ -37,7 +37,7 @@ Do not build UI for either. They are schema only.
 | Framework | Vite + React + TypeScript |
 | Styling | Tailwind |
 | Backend | Supabase (Postgres + PostGIS + Auth + RLS) |
-| Spatial indexing | `h3-js` client side, `h3` extension server side |
+| Spatial indexing | `h3-js` client side, `h3` extension server side (**Superseded (2026-09-10):** no `h3` extension exists on Supabase Postgres; `h3-js` in the `save-area` edge function is the sole server-side implementation — see `docs/ARCHITECTURE.md`) |
 | Delivery | PWA (`vite-plugin-pwa`), installable, offline tile cache |
 
 Rationale for the non-obvious ones:
@@ -53,7 +53,7 @@ See `docs/DATA-MODEL.md` for the full schema and migrations.
 
 Summary:
 - `public.areas` — one row per drawn area. `geography(Polygon, 4326)`, rating, comment, `dimension`, `user_id`.
-- `public.area_cells` — derived H3 index, recomputable from `areas.geom`, populated by a trigger.
+- `public.area_cells` — derived H3 index, recomputable from `areas.geom`, populated by a trigger. **Superseded (2026-09-10):** populated by the `save-area` edge function, not a trigger — see `docs/ARCHITECTURE.md`.
 
 ## Field UX constraints
 
