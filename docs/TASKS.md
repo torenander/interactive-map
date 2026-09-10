@@ -706,6 +706,14 @@ lead after the teammate's run: `npm run build`; `npm run test -- tests/unit/` (1
 `map-shell.spec.ts` still 7/7 — no regression. Visual verification: three areas at
 ratings -1/0/+1 render semi-transparent red/grey/green on the live app.
 
+**Field-UX audit (2026-09-10, read-only teammate at this snapshot):** all 8 SPEC
+§ Field UX / CLAUDE.md user-visible requirements PASS, verified by driving the real UI
+at 390x844 — thumb reach (all draw-flow controls y >= 563 of 844), undo-vertex (5->4,
+drawing continues), undo-last-save (DB row 1->0), modal dismissal preserves geometry
+(reopen pill), overlap semi-transparent newest-on-top (fill-opacity 0.35, source
+order), ratings limited to -1/0/+1 with no dimension UI, blocked save shows an alert
+and writes nothing, attribution visible mid-draw.
+
 **Interpretation call, accepted:** no hard auth gate. The map mounts without a session
 (read-only; `map-shell.spec.ts` requires this), sign-in is a top-right pill, saving
 without a session fails fast inline. Deletes are the one direct table write, per the
