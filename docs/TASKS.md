@@ -341,7 +341,7 @@ git commit -m "feat: Vite React TS scaffold with Tailwind and mobile Playwright 
 
 ---
 
-## [ ] Task 3 — Map renders London from local pmtiles
+## [~] Task 3 — Map renders London from local pmtiles
 
 **Files:**
 - Create: `src/map/style.ts`, `src/map/MapShell.tsx`
@@ -353,7 +353,7 @@ git commit -m "feat: Vite React TS scaffold with Tailwind and mobile Playwright 
 - Produces: `buildStyle(): StyleSpecification` from `src/map/style.ts`, and the default-exported `MapShell` React component. Task 4 adds a control inside `MapShell`.
 - Produces: `LONDON_CENTER: [number, number]` and `LONDON_ZOOM: number`, exported from `src/map/style.ts` and reused by Task 4.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/e2e/map-shell.spec.ts`. Viewport position is read from the URL
 hash, which MapLibre maintains when `hash: true` — this is a real feature
@@ -387,7 +387,7 @@ test('OpenStreetMap attribution is in the DOM', async ({ page }) => {
 })
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 ```bash
 npm run test:e2e -- tests/e2e/map-shell.spec.ts
@@ -396,7 +396,7 @@ npm run test:e2e -- tests/e2e/map-shell.spec.ts
 Expected: three FAILs — no `.maplibregl-canvas`, no hash, no attribution
 element. The Task 2 mount test still passes.
 
-- [ ] **Step 3: Write the style module**
+- [x] **Step 3: Write the style module**
 
 ```ts
 // src/map/style.ts
@@ -431,7 +431,7 @@ Glyphs and sprites are remote here. That is fine for G1 and becomes a G5 problem
 when the map must work offline — do not self-host them now, offline caching is
 listed under G1's `out_of_scope`.
 
-- [ ] **Step 4: Write the map component**
+- [x] **Step 4: Write the map component**
 
 ```tsx
 // src/map/MapShell.tsx
@@ -473,7 +473,7 @@ export default function MapShell() {
 The `map.current` guard matters: React StrictMode runs effects twice in dev and
 would otherwise create two map instances on one container.
 
-- [ ] **Step 5: Mount it**
+- [x] **Step 5: Mount it**
 
 ```tsx
 // src/App.tsx
@@ -484,7 +484,7 @@ export default function App() {
 }
 ```
 
-- [ ] **Step 6: Run the tests and the build**
+- [x] **Step 6: Run the tests and the build**
 
 ```bash
 npm run test:e2e -- tests/e2e/map-shell.spec.ts
@@ -493,7 +493,7 @@ npm run build
 
 Expected: four PASS, build exits 0.
 
-- [ ] **Step 7: Look at it**
+- [x] **Step 7: Look at it**
 
 ```bash
 npm run dev
@@ -503,7 +503,15 @@ Open at 390x844 in device emulation. Streets, water and parks should be drawn,
 not a blank canvas with attribution. A blank canvas with passing tests means the
 archive has no tiles at this zoom — go back to Task 1 Step 4.
 
-- [ ] **Step 8: Commit**
+> **Deviation.** maplibre-gl v6 has no default export — imports are named
+> (`MapLibreMap`, `addProtocol`, `removeProtocol`). And Vite 8/rolldown does not
+> emit MapLibre's internal worker chunk, so the worker request fell through to
+> `index.html` and died parsing HTML: four green DOM tests, blank map. Fixed with
+> `?worker&url` + `setWorkerUrl`. Added a `vector tiles decode and paint` test
+> that fails without the fix, and set `reuseExistingServer: false` because a
+> stale preview server turned that failing test green.
+
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A
