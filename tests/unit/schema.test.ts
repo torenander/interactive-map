@@ -14,7 +14,9 @@
 // supabase/functions/save-area/index.ts), which `supabase start` serves locally. The one
 // exception is the rating check: that must be proven directly against the areas table, not
 // through the function, so it is the database constraint being tested and not app-level
-// validation.
+// validation. Since migration 0007 that direct write needs the service role — signed-in
+// clients no longer hold INSERT/UPDATE on areas at all — so the test asserts both halves:
+// the client is refused the privilege, and the constraint still rejects the value.
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -177,15 +179,31 @@ describe("G2 schema constraints", () => {
   });
 
   it("rating = 3 is rejected by the database, not just app validation", async () => {
-    // Deliberately bypasses save-area: a direct table insert, so what rejects this is
-    // the `check (rating between -2 and 2)` constraint in migration 0001.
-    const { data, error } = await clientA
+    // Two assertions, both deliberately bypassing save-area.
+    //
+    // First: since migration 0007 a signed-in client has no INSERT grant on areas at all
+    // — the sole write path is enforced by grants, not convention — so this direct insert
+    // is refused before any constraint is consulted.
+    const denied = await clientA
+      .from("areas")
+      .insert({ user_id: userA.id, geom: TRAFALGAR_WKT, rating: 3 })
+      .select()
+      .single();
+    expect(denied.data).toBeNull();
+    expect(denied.error).not.toBeNull();
+    expect(denied.error!.code).toBe("42501");
+
+    // Second: the constraint itself, proven through the one role that still holds the
+    // grant. What rejects this is `check (rating between -2 and 2)` from migration 0001
+    // (SQLSTATE 23514), not app validation and not the missing privilege above.
+    const { data, error } = await admin
       .from("areas")
       .insert({ user_id: userA.id, geom: TRAFALGAR_WKT, rating: 3 })
       .select()
       .single();
     expect(data).toBeNull();
     expect(error).not.toBeNull();
+    expect(error!.code).toBe("23514");
   });
 
   it("updating geom replaces the cell set rather than appending", async () => {

@@ -325,9 +325,23 @@ describe("save-area write path", () => {
     TEST_TIMEOUT_MS,
   );
 
-  it("a client cannot forge created_at or updated_at on a direct insert", async () => {
+  it("timestamps are the server's, not the client's", async () => {
     const forged = "2000-01-01T00:00:00+00:00";
-    const { data, error } = await userA.client
+
+    // A signed-in client cannot write areas directly at all since migration 0007, so the
+    // forgery it used to be able to perform is now refused twice over: no grant, and the
+    // trigger would overwrite it anyway. Both are asserted.
+    const denied = await userA.client
+      .from("areas")
+      .insert({ user_id: userA.id, geom: TRAFALGAR_WKT, rating: 0, created_at: forged })
+      .select()
+      .single();
+    expect(denied.error?.code).toBe("42501");
+
+    // The trigger itself, through the role that still holds the grant: forged timestamps
+    // lose to the server clock on insert, and created_at survives an update that tries to
+    // move it.
+    const { data, error } = await admin
       .from("areas")
       .insert({
         user_id: userA.id,
@@ -345,8 +359,7 @@ describe("save-area write path", () => {
     expect(data!.updated_at).not.toBe(forged);
     expect(Date.now() - Date.parse(data!.created_at)).toBeLessThan(TEST_TIMEOUT_MS);
 
-    // The same on update: created_at is frozen, updated_at is the server clock.
-    const { data: updated, error: updateError } = await userA.client
+    const { data: updated, error: updateError } = await admin
       .from("areas")
       .update({ created_at: forged, updated_at: forged, rating: 1 })
       .eq("id", data!.id)
@@ -363,11 +376,113 @@ describe("save-area write path", () => {
     createdAreaIds.push(id);
     expect((await callSaveArea(userA.token, { id, geom: boxAt(0, 0), rating: 0 })).status).toBe(200);
 
-    const { error } = await userA.client.from("areas").update({ dimension: "noise" }).eq("id", id);
+    // Refused twice: the client has no UPDATE grant on areas (migration 0007), and the
+    // check constraint (migration 0006) rejects the value even for a role that does.
+    const denied = await userA.client.from("areas").update({ dimension: "noise" }).eq("id", id);
+    expect(denied.error?.code).toBe("42501");
+
+    const { error } = await admin.from("areas").update({ dimension: "noise" }).eq("id", id);
     expect(error).not.toBeNull();
     expect(error!.message).toMatch(/areas_dimension_overall/);
 
     const { data: row } = await admin.from("areas").select("dimension").eq("id", id).single();
     expect(row!.dimension).toBe("overall");
   }, TEST_TIMEOUT_MS);
+
+  it(
+    "a signed-in client cannot write areas or area_cells around save-area",
+    async () => {
+      const id = randomUUID();
+      createdAreaIds.push(id);
+      expect((await callSaveArea(userA.token, { id, geom: boxAt(0, 0), rating: 0 })).status).toBe(
+        200,
+      );
+
+      // Every write path that used to be open to an authenticated client and would have
+      // let it desynchronise areas from area_cells: an area with no cells, a forged or
+      // garbage h3_index, a hand-edited cell set.
+      const insertArea = await userA.client
+        .from("areas")
+        .insert({ user_id: userA.id, geom: TRAFALGAR_WKT, rating: 0 });
+      expect(insertArea.error?.code).toBe("42501");
+
+      const updateArea = await userA.client.from("areas").update({ rating: -2 }).eq("id", id);
+      expect(updateArea.error?.code).toBe("42501");
+
+      const insertCell = await userA.client
+        .from("area_cells")
+        .insert({ area_id: id, h3_index: "not-an-h3-index", resolution: RESOLUTION });
+      expect(insertCell.error?.code).toBe("42501");
+
+      const updateCell = await userA.client
+        .from("area_cells")
+        .update({ h3_index: "not-an-h3-index" })
+        .eq("area_id", id);
+      expect(updateCell.error?.code).toBe("42501");
+
+      const deleteCell = await userA.client.from("area_cells").delete().eq("area_id", id);
+      expect(deleteCell.error?.code).toBe("42501");
+
+      // Nothing above landed.
+      const { data: row } = await admin.from("areas").select("rating").eq("id", id).single();
+      expect(row!.rating).toBe(0);
+      expect([...(await storedCells(id))].sort()).toEqual([...derivedCells(boxAt(0, 0))].sort());
+
+      // The two paths that must stay open: reading your own rows, and deleting a whole
+      // area direct (the documented contract — the FK cascade takes the cells with it,
+      // without any grant on area_cells).
+      const { data: readable, error: readError } = await userA.client
+        .from("areas")
+        .select("id")
+        .eq("id", id);
+      expect(readError).toBeNull();
+      expect(readable).toHaveLength(1);
+
+      const { error: deleteError } = await userA.client.from("areas").delete().eq("id", id);
+      expect(deleteError).toBeNull();
+      expect((await storedCells(id)).size).toBe(0);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "an over-long comment is rejected before any write",
+    async () => {
+      const id = randomUUID();
+      createdAreaIds.push(id);
+      const geom = boxAt(0, 0);
+      expect(
+        (await callSaveArea(userA.token, { id, geom, rating: 0, comment: "keep me" })).status,
+      ).toBe(200);
+      const { data: rowBefore } = await admin.from("areas").select("*").eq("id", id).single();
+
+      const tooLong = await callSaveArea(userA.token, {
+        id,
+        geom,
+        rating: 1,
+        comment: "x".repeat(2001),
+      });
+      expect(tooLong.status).toBe(422);
+      const { data: rowAfter } = await admin.from("areas").select("*").eq("id", id).single();
+      expect(rowAfter).toEqual(rowBefore);
+
+      // The limit itself, not an off-by-one: exactly 2000 characters is fine.
+      const atLimit = await callSaveArea(userA.token, {
+        id,
+        geom,
+        rating: 1,
+        comment: "y".repeat(2000),
+      });
+      expect(atLimit.status).toBe(200);
+
+      // And the database backs the function up, for any role that can still write direct.
+      const { error } = await admin
+        .from("areas")
+        .update({ comment: "z".repeat(2001) })
+        .eq("id", id);
+      expect(error).not.toBeNull();
+      expect(error!.message).toMatch(/areas_comment_length/);
+    },
+    TEST_TIMEOUT_MS,
+  );
 });
