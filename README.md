@@ -1,5 +1,7 @@
 # areamap
 
+[![CI](https://github.com/torenander/interactive-map/actions/workflows/ci.yml/badge.svg)](https://github.com/torenander/interactive-map/actions/workflows/ci.yml)
+
 Personligt kartverktyg för att betygsätta stadsdelar i London under en
 bostadssökning. Rita en polygon, sätt ett betyg och en kommentar, kom
 tillbaka till den senare. Full spec: `SPEC.md`.
