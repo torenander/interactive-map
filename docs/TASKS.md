@@ -718,3 +718,20 @@ and writes nothing, attribution visible mid-draw.
 (read-only; `map-shell.spec.ts` requires this), sign-in is a top-right pill, saving
 without a session fails fast inline. Deletes are the one direct table write, per the
 CLAUDE.md rule.
+
+---
+
+# G4 — Offline writes — done 2026-09-10
+
+Task breakdown: `docs/TASKS-G4.md` (teammate mvp-g3).
+
+Both `done_when` commands exit 0 on clean state, verified independently by the lead;
+`offline.spec.ts` additionally repeated 3x clean after the teammate's dedupe fix
+(MapLibre `queryRenderedFeatures` reports a feature once per internal tile — fixed
+with `promoteId` + Set-dedupe; had flaked ~50% before). Regressions: map-shell 7/7,
+mvp-loop 1/1.
+
+Design notes: raw IndexedDB queue, injectable flush, queued areas render amber and
+live in a separate list so a server fetch cannot wipe an unflushed save; queueing
+only triggers on real network failure (FunctionsFetchError) — validation/auth errors
+still surface. Offline deletes are not queued (out of scope, surfaces normal error).
