@@ -19,8 +19,11 @@
 //   comment — optional text.
 //
 // The row write and the wholesale cell replacement are ONE call to
-// public.save_area_tx (supabase/migrations/0005_atomic_area_write.sql), so they are one
-// transaction. The old shape — upsert, then delete cells, then insert cells, as three
+// public.save_area_tx (supabase/migrations/0005_atomic_area_write.sql, hardened in 0007),
+// so they are one transaction. Since 0007 that function is also the ONLY thing that can
+// write these tables: INSERT/UPDATE on areas and INSERT/UPDATE/DELETE on area_cells are
+// revoked from the client roles, so "sole write path" is a grant, not a convention. It
+// runs SECURITY DEFINER and re-checks ownership itself — see the migration. The old shape — upsert, then delete cells, then insert cells, as three
 // PostgREST round trips — could die between statements (leaving an updated row with zero
 // cells) and could interleave with a concurrent save of the same id (leaving cells from
 // two geometries mixed together). Both are fixed in the database, not here; this function
@@ -54,6 +57,12 @@ const MAX_CELLS = 5_000;
 const BBOX_ESTIMATE_LIMIT = MAX_CELLS * 4;
 const RES10_CELL_AREA_KM2 = 0.0150;
 const KM_PER_DEGREE = 111.32;
+
+// Comment cap, mirroring `areas_comment_length` in migration 0007 so the caller gets a
+// clean 422 rather than a constraint violation surfacing as a 400. 2000 characters is
+// about a page of prose — generous for a field note, and it stops a megabyte of text
+// being posted into a row.
+const MAX_COMMENT_CHARS = 2000;
 
 // One response for every "you cannot write this id" outcome, whatever the underlying
 // reason. Previously an id belonging to another user produced a verbatim Postgres RLS
@@ -158,6 +167,12 @@ Deno.serve(async (req) => {
 
   // Guards run BEFORE any write. The failure they replace was not a clean rejection: the
   // worker died mid-sequence, after the row had been updated and its cells deleted.
+  if ((body.comment ?? "").length > MAX_COMMENT_CHARS) {
+    return jsonResponse(
+      { error: `Comment is too long: limit ${MAX_COMMENT_CHARS} characters.` },
+      422,
+    );
+  }
   if (estimateBboxCells(body.geom) > BBOX_ESTIMATE_LIMIT) {
     return jsonResponse(
       {
@@ -191,8 +206,8 @@ Deno.serve(async (req) => {
   }
 
   // One transaction: upsert the row, delete its cells, insert the new set. See
-  // supabase/migrations/0005_atomic_area_write.sql. user_id is set from auth.uid() inside
-  // the function, so it cannot be spoofed from here either.
+  // supabase/migrations/0005_atomic_area_write.sql and 0007_sole_write_path.sql. user_id
+  // is set from auth.uid() inside the function, so it cannot be spoofed from here either.
   const { data: area, error: rpcError } = await supabase
     .rpc("save_area_tx", {
       p_id: body.id,
@@ -206,9 +221,10 @@ Deno.serve(async (req) => {
     .single();
 
   if (rpcError) {
-    // 42501 is insufficient_privilege — what RLS raises when the upsert would touch a row
-    // this caller does not own, and what save_area_tx raises for an unauthenticated
-    // caller. Normalised so it cannot be told apart from any other unwritable id.
+    // 42501 is insufficient_privilege — what save_area_tx raises when the target row
+    // belongs to somebody else, and what it raises for an unauthenticated caller (it is
+    // also what RLS itself raises on the direct-table paths). Normalised so none of them
+    // can be told apart from any other unwritable id.
     if (rpcError.code === "42501" || /row-level security/i.test(rpcError.message ?? "")) {
       return jsonResponse(NOT_WRITABLE_BODY, NOT_WRITABLE_STATUS);
     }
