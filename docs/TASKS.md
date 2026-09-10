@@ -693,3 +693,20 @@ stack. Derivation moved to the `save-area` edge function (h3-js, caller's JWT) �
 alternative ARCHITECTURE.md § "Cell derivation runs server side" always allowed; see
 its superseded note and DATA-MODEL.md § Migration 0002 for the full contract.
 `area_cells.h3_index` became `text`.
+
+---
+
+# G3 — MVP loop — done 2026-09-10
+
+Task breakdown: `docs/TASKS-G3.md` (teammate mvp-g3).
+
+All three `done_when` commands exit 0 on a clean `db reset`, run independently by the
+lead after the teammate's run: `npm run build`; `npm run test -- tests/unit/` (10/10);
+`npm run test:e2e -- tests/e2e/mvp-loop.spec.ts` (full round trip at 390x844).
+`map-shell.spec.ts` still 7/7 — no regression. Visual verification: three areas at
+ratings -1/0/+1 render semi-transparent red/grey/green on the live app.
+
+**Interpretation call, accepted:** no hard auth gate. The map mounts without a session
+(read-only; `map-shell.spec.ts` requires this), sign-in is a top-right pill, saving
+without a session fails fast inline. Deletes are the one direct table write, per the
+CLAUDE.md rule.
