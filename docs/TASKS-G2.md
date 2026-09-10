@@ -29,39 +29,55 @@ need it are flagged; they are authored regardless and verified as soon as Docker
 - [x] **Step 2: `.env.example`** documenting `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (local stack defaults).
 - [x] **Step 3: Commit** — `chore: init supabase project scaffold`.
 
-## [~] Task 2 — Migration 0001: tables
+## [ ] Task 2 — Migration 0001: tables — BLOCKED
 
 - [x] **Step 1:** `supabase/migrations/0001_tables.sql`, verbatim from `docs/DATA-MODEL.md` § Migration 0001.
 - [x] **Step 2:** Commit — `feat: areas and area_cells tables`.
-- [ ] Not yet verified against a real `db reset` — Docker unavailable at authoring time.
+- [ ] `npx supabase db reset` fails on this migration's `create extension if not exists h3;`
+      line — see Task 3 for the full finding. Table/index DDL itself never ran far enough to
+      be exercised.
 
-## [~] Task 3 — Migration 0002: cell derivation trigger
+## [ ] Task 3 — Migration 0002: cell derivation trigger — BLOCKED
 
 - [x] **Step 1:** `supabase/migrations/0002_derive_cells.sql`, verbatim from `docs/DATA-MODEL.md` § Migration 0002.
-- [ ] **Step 2 (needs Docker):** `npx supabase db reset`. Docker was not running at authoring
-      time — NOT RUN. If it errors on the H3 extension name or `h3_polygon_to_cells`
-      signature, fix the call in this migration only, preserving the semantics (derive cells
-      from `new.geom` at resolution 10), and record the change with an inline SQL comment plus
-      a note here.
-- [x] **Step 3:** Commit — `feat: derive area_cells from geometry via trigger`.
+- [ ] **Step 2 (needs Docker):** `npx supabase db reset`. Docker came up and this was run for
+      real. Result: `npx supabase start` fails applying **0001**, not 0002:
+      `ERROR: extension "h3" is not available (SQLSTATE 0A000). Could not open extension
+      control file ".../extension/h3.control": No such file or directory.`
+      Verified this is not a naming or signature issue: listed every `*.control` file bundled
+      in `public.ecr.aws/supabase/postgres:17.6.1.167` (the image `major_version = 17` in
+      `supabase/config.toml` resolves to) — 85 extensions present, including `postgis` at
+      3.3.7, but **no `h3` or `h3_postgis` control file anywhere in the image**. This is not
+      the signature-drift hazard `docs/DATA-MODEL.md` flagged; the extension is not packaged
+      in the local dev Postgres image at all, on any Postgres major version this CLI ships.
+      Did not touch migration 0002's function call — there is nothing to fix there until the
+      extension itself exists locally. Did not build a custom Postgres image to add it — that
+      is a real infra decision (which h3-pg build, pinned where, who maintains it) outside
+      "fix the call in 0002" and outside `supabase/**` as scoped to me. Stopping and reporting
+      per `docs/OBJECTIVES.md`: "If a check is wrong, stop and say so."
+- [x] **Step 3:** Commit — `feat: derive area_cells from geometry via trigger`. (Migration
+      content unchanged; nothing to fix yet.)
 
-## [~] Task 4 — Migration 0003: updated_at trigger
+## [ ] Task 4 — Migration 0003: updated_at trigger — BLOCKED
 
 - [x] **Step 1:** `supabase/migrations/0003_touch_updated_at.sql`, verbatim from `docs/DATA-MODEL.md` § Migration 0003.
 - [x] **Step 2:** Commit — `feat: maintain updated_at via trigger`.
-- [ ] Not yet verified against a real `db reset` — Docker unavailable at authoring time.
+- [ ] `db reset` never reaches this migration — it aborts on 0001 first. See Task 3.
 
-## [~] Task 5 — Migration 0004: row-level security
+## [ ] Task 5 — Migration 0004: row-level security — BLOCKED
 
 - [x] **Step 1:** `supabase/migrations/0004_rls.sql`, verbatim from `docs/DATA-MODEL.md` § Migration 0004.
 - [x] **Step 2:** Commit — `feat: enable RLS on areas and area_cells`.
-- [ ] Not yet verified against a real `db reset` — Docker unavailable at authoring time.
+- [ ] `db reset` never reaches this migration — it aborts on 0001 first. See Task 3.
 
-## [ ] Task 6 — Generate types (needs Docker)
+## [ ] Task 6 — Generate types — BLOCKED
 
-- [ ] **Step 1:** `npx supabase db reset` clean, all four migrations apply with exit 0.
-- [ ] **Step 2:** `npx supabase gen types typescript --local > src/db/types.ts`.
-- [ ] **Step 3:** Commit — `chore: generate database types`.
+- [ ] **Step 1:** `npx supabase db reset` clean, all four migrations apply with exit 0. RAN,
+      exit 1 — blocked by the missing `h3` extension, see Task 3.
+- [ ] **Step 2:** `npx supabase gen types typescript --local > src/db/types.ts`. NOT RUN — no
+      migrated database to introspect. `src/db/types.ts` remains the hand-authored placeholder
+      from Task 7.
+- [ ] **Step 3:** Commit — `chore: generate database types`. NOT RUN.
 
 ## [~] Task 7 — Typed Supabase client with email auth
 
@@ -87,14 +103,23 @@ Assertions required by `docs/OBJECTIVES.md` § G2, against a local Supabase inst
       and two distinct authenticated clients for the RLS-isolation assertion. Reads
       connection details from `supabase status -o env` rather than hardcoding keys.
 - [ ] **Step 2 (needs Docker):** `npm run test -- tests/unit/schema.test.ts` green against local
-      DB — NOT RUN. Confirmed it runs and fails cleanly with an actionable error
-      (`Could not read supabase status -o env ... no such container`) rather than an
-      assertion-free pass, since Docker is down at authoring time.
+      DB — NOT RUN. Confirmed it runs and fails cleanly with an actionable error rather than an
+      assertion-free pass, both before Docker came up (`Could not read supabase status -o env
+      ... no such container`) and after (blocked transitively by Task 3/6 — no migrated local
+      DB to test against).
 - [x] **Step 3:** Commit — `test: schema constraints and RLS isolation`.
 
-## [ ] Task 9 — Close out G2
+## [ ] Task 9 — Close out G2 — NOT DONE, BLOCKED
 
 - [ ] **Step 1:** Run all three `done_when` commands from `docs/OBJECTIVES.md` § G2 unmodified,
       record exit codes.
-- [ ] **Step 2:** Report to team lead. Do **not** mark this file's tasks `[x]` or edit
-      `docs/OBJECTIVES.md`/`docs/TASKS.md` unless every command exited 0 and was watched running.
+  - `npx supabase db reset` — RAN, **exit 1** (missing `h3` extension in the local Postgres
+    image, see Task 3).
+  - `npx supabase gen types typescript --local | diff - src/db/types.ts` — NOT RUN (no
+    migrated DB).
+  - `npm run test -- tests/unit/schema.test.ts` — NOT RUN in a meaningful sense (no migrated
+    DB to test against; the file itself runs and fails with a clear setup error, not silently).
+- [x] **Step 2:** Reported to team lead. G2 tasks 1, 2 (client), and 8 (test authored) are
+      genuinely done; migrations 2–6 are blocked on an environment gap (h3-pg not packaged in
+      the Supabase local dev Postgres image) that is outside "fix the call in 0002." **G2 is
+      NOT marked done** — `docs/OBJECTIVES.md`/`docs/TASKS.md` untouched, as instructed.
