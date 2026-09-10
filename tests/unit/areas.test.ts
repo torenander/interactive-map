@@ -1,7 +1,7 @@
 // Rating -> color mapping used to paint saved areas on the map. docs/TESTING.md requires
 // a test on anything touching src/areas.
 import { describe, expect, it } from "vitest";
-import { colorForRating, ratingFillColorExpression } from "../../src/areas/color";
+import { colorForRating, fillColorExpression, ratingFillColorExpression } from "../../src/areas/color";
 
 describe("colorForRating", () => {
   it("maps -1 to red", () => {
@@ -33,6 +33,17 @@ describe("ratingFillColorExpression", () => {
       "#9ca3af",
       1,
       "#22c55e",
+    ]);
+  });
+});
+
+describe("fillColorExpression", () => {
+  it("is amber for queued features regardless of rating, and falls back to rating color otherwise", () => {
+    expect(fillColorExpression()).toEqual([
+      "case",
+      ["==", ["get", "queued"], true],
+      "#f59e0b",
+      ratingFillColorExpression(),
     ]);
   });
 });
