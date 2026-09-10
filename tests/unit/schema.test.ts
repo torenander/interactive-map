@@ -47,17 +47,20 @@ function readLocalSupabaseEnv(): Record<string, string> {
 
 type GeoJsonPolygon = { type: "Polygon"; coordinates: number[][][] };
 
-// Two small polygons far enough apart that they share no H3 res-10 cells:
-// Trafalgar Square area, and Greenwich, a few km east.
+// Two polygons far enough apart that they share no H3 res-10 cells, and each large
+// enough (res 10 hexagons are ~65 m edge, ~130 m tip-to-tip) to reliably contain at
+// least one cell center — a smaller box can legitimately resolve to zero cells, which
+// is real h3-js behaviour (polygonToCells is center-containment, not intersection), not
+// a bug: Trafalgar Square area, and Greenwich, a few km east.
 const TRAFALGAR: GeoJsonPolygon = {
   type: "Polygon",
   coordinates: [
     [
-      [-0.128, 51.507],
-      [-0.127, 51.507],
-      [-0.127, 51.508],
-      [-0.128, 51.508],
-      [-0.128, 51.507],
+      [-0.13, 51.505],
+      [-0.125, 51.505],
+      [-0.125, 51.51],
+      [-0.13, 51.51],
+      [-0.13, 51.505],
     ],
   ],
 };
@@ -65,18 +68,18 @@ const GREENWICH: GeoJsonPolygon = {
   type: "Polygon",
   coordinates: [
     [
-      [-0.01, 51.478],
-      [-0.009, 51.478],
-      [-0.009, 51.479],
-      [-0.01, 51.479],
-      [-0.01, 51.478],
+      [-0.012, 51.476],
+      [-0.007, 51.476],
+      [-0.007, 51.481],
+      [-0.012, 51.481],
+      [-0.012, 51.476],
     ],
   ],
 };
 // WKT form of TRAFALGAR, for the one test that must bypass save-area and write the
 // areas table directly.
 const TRAFALGAR_WKT =
-  "SRID=4326;POLYGON((-0.128 51.507, -0.127 51.507, -0.127 51.508, -0.128 51.508, -0.128 51.507))";
+  "SRID=4326;POLYGON((-0.13 51.505, -0.125 51.505, -0.125 51.51, -0.13 51.51, -0.13 51.505))";
 
 type SaveAreaResult = {
   area: Database["public"]["Tables"]["areas"]["Row"];
