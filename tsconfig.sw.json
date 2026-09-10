@@ -7,7 +7,7 @@
     "moduleResolution": "bundler",
     "skipLibCheck": true,
     "noEmit": true,
-    "types": []
+    "types": ["vite/client"]
   },
   "include": ["src/sw.ts"]
 }

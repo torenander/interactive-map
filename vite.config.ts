@@ -3,7 +3,14 @@ import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// Optional. Unset (default) keeps every path root-relative ('/'), matching
+// local dev, the preview server and every existing test unchanged. Set at
+// build time for a subpath static-host deploy (e.g. GitHub Pages project
+// site at /<repo>/) — see docs/DEPLOY.md § GitHub Pages. Must end with '/'.
+const BASE = process.env.VITE_BASE || '/'
+
 export default defineConfig({
+  base: BASE,
   plugins: [
     react(),
     tailwindcss(),
@@ -29,13 +36,14 @@ export default defineConfig({
         name: 'areamap',
         short_name: 'areamap',
         description: 'Personal map annotation tool for rating London neighbourhoods',
-        start_url: '/',
+        start_url: BASE,
+        scope: BASE,
         display: 'standalone',
         theme_color: '#111827',
         background_color: '#f8f6f2',
         icons: [
-          { src: '/pwa-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/pwa-512.png', sizes: '512x512', type: 'image/png' },
+          { src: `${BASE}pwa-192.png`, sizes: '192x192', type: 'image/png' },
+          { src: `${BASE}pwa-512.png`, sizes: '512x512', type: 'image/png' },
         ],
       },
       devOptions: {
