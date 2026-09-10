@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Env
+.env
+.env.local
+
+# Build / deps (för när stacken väljs)
+node_modules/
+dist/
+build/
+
+# Claude Code — lokala, icke-delade inställningar
+.claude/settings.local.json
