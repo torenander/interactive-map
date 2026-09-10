@@ -2,12 +2,7 @@ name: Deploy
 
 on:
   push:
-    # TEMP for pre-merge verification only — see the trailing commit on this
-    # branch that removes 'cd' again. workflow_dispatch can't be dispatched
-    # from a non-default branch until this file exists on main (GitHub only
-    # registers dispatchable workflows from the default branch), so a push
-    # trigger is the only way to prove this workflow runs before merge.
-    branches: [main, cd]
+    branches: [main]
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
