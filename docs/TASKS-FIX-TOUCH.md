@@ -68,8 +68,7 @@ The wrapper (`start-drawing` / `undo-vertex` / `reopen-pending`) used Tailwind's
 non-notched devices `env(safe-area-inset-bottom)` is `0`, so this resolves to the same
 `6rem` `bottom-24` gave — no visual change there.
 
-## Gates (all green, no retries needed — `npx supabase status` checked healthy before
-each e2e run)
+## Gates (all green; one retry needed)
 
 | Gate | Exit |
 |---|---|
@@ -77,6 +76,12 @@ each e2e run)
 | `PREVIEW_PORT=4873 npm run test:e2e -- tests/e2e/touch-draw.spec.ts` | 0 (1 passed) |
 | `PREVIEW_PORT=4873 npm run test:e2e -- tests/e2e/map-shell.spec.ts` | 0 (7 passed) |
 | `PREVIEW_PORT=4873 npm run test:e2e -- tests/e2e/offline.spec.ts` | 0 (1 passed) |
+
+One combined run of all three specs together hit `AuthRetryableFetchError: Database
+error checking email` on both `offline.spec.ts` and `touch-draw.spec.ts`'s
+`beforeAll` — a concurrent agent's DB reset landing mid-run, per the lead's warning.
+`npx supabase status` showed db/api healthy immediately after; a retry of the same
+three-spec run passed 9/9 clean.
 
 ## Deviations
 
