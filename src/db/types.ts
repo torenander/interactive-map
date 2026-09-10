@@ -463,6 +463,32 @@ export type Database = {
       }
       postgis_version: { Args: never; Returns: string }
       postgis_wagyu_version: { Args: never; Returns: string }
+      save_area_tx: {
+        Args: {
+          p_cells: string[]
+          p_comment: string
+          p_geom_geojson: Json
+          p_id: string
+          p_rating: number
+          p_resolution: number
+        }
+        Returns: {
+          comment: string | null
+          created_at: string
+          dimension: string
+          geom: unknown
+          id: string
+          rating: number
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "areas"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       st_3dclosestpoint: {
         Args: { geom1: unknown; geom2: unknown }
         Returns: unknown
