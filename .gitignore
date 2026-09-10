@@ -20,6 +20,10 @@ build/
 
 # Basemap build artifact — rebuild with scripts/fetch-tiles.sh
 public/tiles/*.pmtiles
+# Exception: the production maxzoom-14 extract is tracked and deployed
+# same-origin via GitHub Pages (see docs/DEPLOY.md § Production) — the dev
+# maxzoom-15 london.pmtiles above stays untracked/local-only.
+!public/tiles/london-z14.pmtiles
 
 # Playwright
 /test-results/
