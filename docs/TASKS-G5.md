@@ -58,6 +58,58 @@ own reasoning restated in `docs/OBJECTIVES.md` § G5: precaching a 125MB file bl
 typical browser storage quotas and fails silently. The runtime route above is the
 only path that ever touches it.
 
+### Bug found while verifying this against the real WebKit E2E project
+
+A `Response` body can only be read once. The first version of
+`getOrFetchFullPmtiles` deduped concurrent range requests onto one in-flight
+`fetch()` promise and then handed **the same fetched `Response` object** to every
+caller waiting on it. A tile-heavy warm load fires dozens of concurrent range
+requests for the same URL; the first reader of that shared object succeeded and
+every other concurrent reader failed trying to read an already-consumed body —
+surfacing as a `416 Range Not Satisfiable`, because `workbox-range-requests`'
+`createPartialResponse` swallows the read error into that status rather than
+throwing. Fixed by having the in-flight promise resolve to a plain `boolean`
+("the cache entry exists now") and having *every* caller — including the one that
+triggered the fetch — get its own fresh `Response` via a separate `cache.match()`
+call afterwards. Confirmed via a throwaway diagnostic Playwright script (not
+committed) that logged every URL `src/sw.ts`'s pmtiles route handler actually saw,
+in both Chromium and WebKit, before and after the fix.
+
+### WebKit gap: Service Worker does not intercept dedicated-Worker script loads
+
+Separately, and specific to this project's mobile E2E project (WebKit, per
+`playwright.config.ts`): a network-blocked reload rendered nothing, even after the
+bug above was fixed and `pmtiles-v1` was confirmed populated. The cause is
+upstream of tile caching entirely — `assets/maplibre-gl-worker-*.js` (G1's
+`setWorkerUrl` fix in `src/map/MapShell.tsx`) is correctly precached, but WebKit's
+service worker does not intercept the network request a `new Worker(url)` call
+makes to fetch its own script; interception there only covers document and
+main-thread `fetch()` calls. Offline, the worker script load fails outright, no
+worker exists, and — per G1's own comment in `MapShell.tsx` — "without a worker
+nothing decodes vector tiles."
+
+Fixed in `src/map/MapShell.tsx` without touching the surrounding effect or
+breaking G1's fix: instead of pointing `setWorkerUrl` straight at the worker
+chunk's network URL, a `resolveWorkerUrl` helper fetches that URL through a plain
+main-thread `fetch()` first (which the service worker *does* intercept and can
+serve from precache) and hands MapLibre a `Blob` URL built from the response
+instead. A `blob:` URL never touches the network at all, so the browser has
+nothing to fail to load offline. This needs the worker source in hand before any
+`Map` is constructed, so the `setWorkerUrl` call is now behind a top-level
+`await` — module evaluation (and therefore the whole app, since `main.tsx`
+transitively imports `MapShell.tsx`) blocks on it, which was preferred over a
+fire-and-forget swap racing the component's `useEffect` non-deterministically.
+Falls back to the original network URL on fetch failure (e.g. plain `npm run dev`
+with no service worker registered — `devOptions.enabled: false` in
+`vite.config.ts` — still resolves it via a real network fetch, unchanged
+behaviour from before this task).
+
+`tests/e2e/offline-map.spec.ts`'s network-block also has to let `blob:` URLs
+through unmolested (see the in-file comment) — aborting a `blob:` "request" via
+Playwright's `context.route` crashes WebKit's inspector the same way aborting the
+top-level navigation request does, because neither one is a real network request
+Playwright can legitimately intercept.
+
 Glyphs and sprites (`protomaps.github.io/basemaps-assets/...`) are runtime-cached
 with a plain Workbox `CacheFirst` route — normal whole-file GETs, no range
 handling needed, but required offline or label rendering breaks even with tiles
@@ -96,6 +148,9 @@ present.
 - [x] `CacheFirst` route for `https://protomaps.github.io/basemaps-assets/*`
       (glyphs + sprites), with `workbox-expiration` capping entries so it can't
       grow unbounded.
+- [x] Fixed a shared-`Response`-body concurrency bug in the pmtiles handler
+      found while verifying against the real E2E project — see "Bug found while
+      verifying..." above.
 
 ## [~] Task 4 — `scripts/assert-pwa.mjs`
 
@@ -106,21 +161,39 @@ present.
 - [x] Checks, each printed with pass/fail: manifest `<link>` resolves and parses;
       `name`, `start_url`, `display` in `{standalone, fullscreen}`, icons ≥192 and
       ≥512 present; SW registers and, after a reload, `navigator.serviceWorker.controller`
-      is non-null; a reload with `page.route('**/*', route => route.abort())`
-      still yields a `200`/document response for `/`.
+      is non-null; a reload with `context.setOffline(true)` still yields a
+      `200`/document response with `#root` attached for `/`. Runs against
+      Chromium (`@playwright/test`'s bundled `chromium`), where `setOffline`
+      behaves correctly — see Task 5's note on why the WebKit-run E2E spec
+      can't use the same mechanism.
 - [x] Exit 0 only if every check passes.
 
 ## [~] Task 5 — `tests/e2e/offline-map.spec.ts`
 
-- [x] 390x844 (project default). Warm load, wait for
+- [x] 390x844 (project default, WebKit). Warm load, wait for
       `window.__map.queryRenderedFeatures().length > 0` (same pattern as
-      `map-shell.spec.ts`'s "vector tiles decode and paint" test), then block the
-      network and reload, then assert features paint again post-reload — not just
+      `map-shell.spec.ts`'s "vector tiles decode and paint" test), one more
+      *online* reload waiting for the same paint condition again (so the pmtiles
+      route has actually finished caching the full file before going offline —
+      the very first load is never SW-controlled, nothing caches during it), then
+      block the network and reload, then assert features paint again — not just
       that the shell loads.
-- [x] Network blocking: `page.route('**/*', ...)` hard-block for the reload,
-      not `context.setOffline(true)` — noted in-file why (WebKit's `setOffline`
-      does not reliably cut off `localhost` requests, so it would pass for the
-      wrong reason).
+- [x] Network blocking: `context.route('**/*', ...)` hard-block, letting
+      navigation requests and `blob:` URLs through — not `context.setOffline(true)`.
+      Documented in-file and in the "WebKit gap" section above: `setOffline(true)`
+      makes WebKit throw an internal error on the next navigation in this
+      Playwright build, and aborting the navigation request (or a `blob:`
+      pseudo-request) via `context.route` crashes WebKit's inspector
+      ("Blocked by Web Inspector") rather than simulating offline.
+- [x] **Deviation, `src/map/MapShell.tsx`:** required a change beyond
+      "sw registration belongs in main.tsx" to actually pass — see "WebKit gap"
+      above. G1's `setWorkerUrl` fix (why a worker bundle is resolved manually at
+      all) is untouched; only *what URL* gets handed to it changed, from the
+      network URL directly to a `Blob` URL built from fetching that same URL
+      first, so the browser never issues an uninterceptable network request for
+      the worker script when offline. `npm run test:e2e -- tests/e2e/map-shell.spec.ts`
+      (out of scope to touch, must keep passing) reverified after this change —
+      see Task 7.
 
 ## [~] Task 6 — Port discipline plumbing
 

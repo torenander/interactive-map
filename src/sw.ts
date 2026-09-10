@@ -39,8 +39,18 @@ self.addEventListener('activate', (event) => {
 // per its own Range header via workbox-range-requests. Concurrent range
 // requests that arrive before the first fetch resolves share one in-flight
 // promise instead of each starting their own 125MB download.
+//
+// A `Response` body can only be read once. A tile-heavy warm load fires
+// dozens of concurrent range requests for the same URL, all racing on the
+// same in-flight fetch — an earlier version of this handler handed every
+// one of them the *same* fetched Response object, and the second reader
+// always failed (surfacing as a 416 from workbox-range-requests, whose
+// `createPartialResponse` swallows the read error into that status). The
+// fix: the in-flight promise only signals "the cache entry exists now";
+// every caller — including the one that triggered the fetch — gets its own
+// fresh `Response` via a separate `cache.match()` afterwards.
 const PMTILES_CACHE = 'pmtiles-v1'
-const pmtilesInflight = new Map<string, Promise<Response>>()
+const pmtilesInflight = new Map<string, Promise<boolean>>()
 
 async function getOrFetchFullPmtiles(url: string, cache: Cache): Promise<Response | null> {
   const cached = await cache.match(url)
@@ -51,21 +61,17 @@ async function getOrFetchFullPmtiles(url: string, cache: Cache): Promise<Respons
     pending = (async () => {
       // A fresh Request with no Range header — we want the whole file.
       const response = await fetch(new Request(url))
-      if (response.ok) {
-        await cache.put(url, response.clone())
-      }
-      return response
+      if (!response.ok) return false
+      await cache.put(url, response)
+      return true
     })()
     pmtilesInflight.set(url, pending)
     void pending.finally(() => pmtilesInflight.delete(url))
   }
 
-  try {
-    const full = await pending
-    return full.ok ? full : null
-  } catch {
-    return null
-  }
+  const cachedOk = await pending.catch(() => false)
+  if (!cachedOk) return null
+  return (await cache.match(url)) ?? null
 }
 
 registerRoute(
