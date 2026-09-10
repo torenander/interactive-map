@@ -72,8 +72,14 @@ for areas. Contract:
 - Input: `{ id, geom, rating, comment }` with a client-generated uuid as `id`, so a
   retried call is an idempotent upsert.
 - Runs with the caller's JWT, not the service role — RLS applies as usual.
-- Computes the cell set with h3-js `polygonToCells` at resolution 10 and replaces the
-  area's cells wholesale (delete + insert). Never appends.
+- Computes the cell set with h3-js `polygonToCells` at resolution 10, then hands row and
+  cells to `public.save_area_tx` (migration 0005) in a single call, which replaces the
+  area's cells wholesale (delete + insert) inside one transaction. Never appends.
+- Rejects a polygon deriving more than 5,000 res-10 cells (~75 km²) with a 422, before
+  any write — see migration 0005 for why the ceiling exists and how it was chosen.
+- Every "you cannot write this id" outcome returns the same `404 {"error": "Area not
+  found or not writable"}`, so another user's area id is not distinguishable from any
+  other unwritable one by message or status.
 - Whole-area deletes go straight to the table; the FK cascade removes cells.
 
 Rebuild the whole index if the derivation logic ever changes: re-save each area
@@ -122,6 +128,31 @@ create policy area_cells_owner on public.area_cells
 ```
 
 RLS goes in before any real data exists. Enabling it on a populated table is where leaks happen.
+
+## Migration 0005 — atomic area write
+
+`public.save_area_tx(p_id uuid, p_geom_geojson jsonb, p_rating smallint, p_comment text,
+p_cells text[], p_resolution smallint)` — `security invoker`, execute granted to
+`authenticated` only. See `supabase/migrations/0005_atomic_area_write.sql` for the full
+rationale; in short, the row write and the cell replacement are now one transaction
+instead of three PostgREST round trips, which fixes two reproduced defects: a partial
+write (row updated, cells deleted, insert never reached) when the edge worker died
+mid-sequence, and interleaved concurrent saves of the same id leaving `area_cells`
+holding cells from several geometries at once. Concurrent writers for one id serialise on
+the row lock the upsert takes, so last-write-wins stays true for the cells as well as the
+row — the model docs/DATA-MODEL.md § Client-side write queue already assumed.
+
+The 0002 contract above is unchanged in intent; `save-area` still derives cells with
+h3-js and still owns the write path. Only the number of transactions changed.
+
+## Migration 0006 — server-owned timestamps, pinned dimension
+
+`touch_updated_at` fires `before insert or update` (0003 was update-only), sets
+`updated_at` from the server clock on both, and freezes `created_at` to its original
+value on update — a client could previously insert a row with any timestamps it liked,
+which makes "last-write-wins on `updated_at`" meaningless. `areas` also gains
+`check (dimension = 'overall')`, so the CLAUDE.md pin is enforced rather than conventional.
+Widening it later is one migration.
 
 ## Rules
 
