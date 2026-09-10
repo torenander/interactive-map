@@ -511,14 +511,24 @@ export default function MapShell() {
         )}
       </div>
 
-      {/* Thumb-reachable controls, bottom third of the screen (SPEC.md § Field UX). */}
-      <div className="absolute inset-x-0 bottom-24 flex flex-col items-center gap-2 px-4">
+      {/* Thumb-reachable controls, bottom third of the screen (SPEC.md § Field UX).
+          bottom-24 (6rem) is the non-notched position; on notched devices the
+          rating modal already adds env(safe-area-inset-bottom) the same way
+          (see RatingModal's bottom-sheet padding) — do the same here via inline
+          style so this wrapper doesn't sit under the home-indicator area, while
+          staying at exactly 6rem (bottom-24's value) when the inset is 0. */}
+      <div
+        className="absolute inset-x-0 flex flex-col items-center gap-2 px-4"
+        style={{ bottom: "calc(env(safe-area-inset-bottom) + 6rem)" }}
+      >
         {showReopenPill && (
           <button
             type="button"
             data-testid="reopen-pending"
             onClick={handleReopenPending}
-            className="rounded-full bg-gray-900 px-4 py-2 text-sm font-medium text-white shadow"
+            // min-h-11 (44px): field-UX tap-target minimum (verified touch bug) —
+            // was 36px tall. flex/items-center keeps the label centred at the new height.
+            className="flex min-h-11 items-center justify-center rounded-full bg-gray-900 px-4 text-sm font-medium text-white shadow"
           >
             Rate &amp; save
           </button>
