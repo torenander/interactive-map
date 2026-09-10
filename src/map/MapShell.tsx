@@ -26,7 +26,29 @@ import { enqueueWrite, listQueuedWrites, type QueuedWrite } from '../offline/que
 // through to index.html and the worker dies parsing HTML. Without a worker
 // nothing decodes vector tiles and the map renders background only. Point
 // MapLibre at the worker bundle we resolve ourselves.
-setWorkerUrl(workerUrl)
+//
+// G5 addendum: WebKit's service worker does not intercept requests for a
+// dedicated Worker's script (interception there only covers document/
+// main-thread fetches, not worker script loading) — a network-blocked
+// reload would fail to spawn the worker at all even though the file is
+// precached. Fetch the worker script through a plain `fetch` first (which
+// the service worker *does* intercept and can serve from its precache) and
+// hand MapLibre a blob URL built from that response, so the browser never
+// issues a separate, uninterceptable network request for the worker file.
+// The top-level await blocks this module — and therefore the whole app,
+// since main.tsx imports it — until the worker source is in hand, so the
+// map is never created racing against an unresolved worker URL.
+async function resolveWorkerUrl(originalUrl: string): Promise<string> {
+  try {
+    const response = await fetch(originalUrl)
+    if (!response.ok) return originalUrl
+    const source = await response.text()
+    return URL.createObjectURL(new Blob([source], { type: 'application/javascript' }))
+  } catch {
+    return originalUrl
+  }
+}
+setWorkerUrl(await resolveWorkerUrl(workerUrl))
 
 const SAVED_AREAS_SOURCE = 'saved-areas'
 const SAVED_AREAS_FILL_LAYER = 'saved-areas-fill'
