@@ -20,3 +20,7 @@ build/
 
 # Basemap build artifact — rebuild with scripts/fetch-tiles.sh
 public/tiles/*.pmtiles
+
+# Playwright
+/test-results/
+/playwright-report/

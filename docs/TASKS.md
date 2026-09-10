@@ -146,7 +146,7 @@ git commit -m "feat: reproducible Greater London pmtiles extract"
 
 ---
 
-## [ ] Task 2 — App scaffold and mobile test harness
+## [~] Task 2 — App scaffold and mobile test harness
 
 Vite + React + TS + Tailwind, plus a Playwright runner pinned to 390x844. The
 harness ships here because G1's second `done_when` command is a Playwright
@@ -160,7 +160,7 @@ invocation — without it the goal cannot be evaluated.
 - Produces: npm scripts `dev`, `build`, `preview`, `test`, `test:e2e`. Tasks 3–5 rely on these exact names; `docs/OBJECTIVES.md` calls `npm run build` and `npm run test:e2e` verbatim.
 - Produces: `tests/e2e/map-shell.spec.ts`, extended by Tasks 3 and 4.
 
-- [ ] **Step 1: Scaffold Vite into the non-empty repo**
+- [x] **Step 1: Scaffold Vite into the non-empty repo**
 
 `npm create vite` refuses a non-empty directory non-interactively, so scaffold
 into a temp directory and move the files across.
@@ -168,23 +168,29 @@ into a temp directory and move the files across.
 ```bash
 TMP=$(mktemp -d)
 npm create vite@latest "$TMP/app" -- --template react-ts
-cp -R "$TMP/app/." .
-rm -rf "$TMP"
-rm -f public/vite.svg src/assets/react.svg
+# The scaffolder resolves the path relative to cwd, so the app may land in
+# ./var/folders/... inside the repo. Locate it before copying.
+APP=$(find "$TMP" var -maxdepth 8 -name package.json -not -path '*/node_modules/*' 2>/dev/null | head -1 | xargs dirname)
+# The template ships its own .gitignore and README.md — ours must survive.
+rm -f "$APP/.gitignore" "$APP/README.md"
+cp -R "$APP/." .
+rm -rf "$TMP" var
+rm -f public/vite.svg src/App.css
+rm -rf src/assets
 npm install
 ```
 
-- [ ] **Step 2: Add Tailwind, MapLibre, pmtiles, Playwright and vitest**
+- [x] **Step 2: Add Tailwind, MapLibre, pmtiles, Playwright and vitest**
 
 Tailwind v4 is a Vite plugin, not a PostCSS config.
 
 ```bash
 npm install maplibre-gl pmtiles @protomaps/basemaps
 npm install -D tailwindcss @tailwindcss/vite @playwright/test vitest
-npx playwright install chromium
+npx playwright install webkit   # devices['iPhone 14'] is a WebKit descriptor
 ```
 
-- [ ] **Step 3: Wire Tailwind into Vite**
+- [x] **Step 3: Wire Tailwind into Vite**
 
 ```ts
 // vite.config.ts
@@ -205,7 +211,7 @@ export default defineConfig({
 html, body, #root { height: 100%; margin: 0; }
 ```
 
-- [ ] **Step 4: Set the npm scripts**
+- [x] **Step 4: Set the npm scripts**
 
 Edit the `scripts` block of `package.json` to exactly:
 
@@ -222,7 +228,7 @@ Edit the `scripts` block of `package.json` to exactly:
 Port 4173 is fixed because `docs/OBJECTIVES.md` § G5 runs Lighthouse against
 `http://localhost:4173`.
 
-- [ ] **Step 5: Write the Playwright config**
+- [x] **Step 5: Write the Playwright config**
 
 ```ts
 // playwright.config.ts
@@ -240,7 +246,16 @@ export default defineConfig({
     geolocation: { latitude: 51.5072, longitude: -0.1276 }, // Charing Cross
   },
   projects: [
-    { name: 'mobile', use: { ...devices['iPhone 14'] } }, // 390x844
+    {
+      name: 'mobile',
+      use: {
+        ...devices['iPhone 14'],
+        // The descriptor's viewport is 390x664 — iPhone 14 screen minus Safari
+        // chrome. Installed as a PWA the app runs standalone and gets the full
+        // 390x844, which is the target docs/TESTING.md pins. Test that.
+        viewport: { width: 390, height: 844 },
+      },
+    },
   ],
   webServer: {
     command: 'npm run build && npm run preview',
@@ -251,7 +266,7 @@ export default defineConfig({
 })
 ```
 
-- [ ] **Step 6: Write the failing harness test**
+- [x] **Step 6: Write the failing harness test**
 
 One real assertion — that the app mounts and the viewport is the mobile target.
 `docs/TESTING.md` forbids assertion-free placeholder tests.
@@ -267,7 +282,7 @@ test('app mounts at the mobile target viewport', async ({ page }) => {
 })
 ```
 
-- [ ] **Step 7: Run it to verify it fails**
+- [x] **Step 7: Run it to verify it fails**
 
 ```bash
 npm run test:e2e -- tests/e2e/map-shell.spec.ts
@@ -276,7 +291,7 @@ npm run test:e2e -- tests/e2e/map-shell.spec.ts
 Expected: FAIL. Before Step 8, `src/App.tsx` still renders the Vite demo
 counter; the run fails at build or on the `#root` assertion.
 
-- [ ] **Step 8: Replace the Vite demo with an empty full-viewport shell**
+- [x] **Step 8: Replace the Vite demo with an empty full-viewport shell**
 
 ```tsx
 // src/App.tsx
@@ -301,7 +316,7 @@ createRoot(document.getElementById('root')!).render(
 
 Delete `src/App.css`.
 
-- [ ] **Step 9: Run the test and the build**
+- [x] **Step 9: Run the test and the build**
 
 ```bash
 npm run test:e2e -- tests/e2e/map-shell.spec.ts
@@ -310,14 +325,14 @@ npm run build
 
 Expected: PASS, and build exits 0.
 
-- [ ] **Step 10: Ignore build and test output**
+- [x] **Step 10: Ignore build and test output**
 
 ```bash
 printf '\n# Playwright\n/test-results/\n/playwright-report/\n' >> .gitignore
 git status --short   # no node_modules/, dist/, test-results/
 ```
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add -A
