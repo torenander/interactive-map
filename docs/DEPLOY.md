@@ -230,12 +230,17 @@ git add -A && git commit -m "deploy: production build to gh-pages"
 git push origin gh-pages --force
 ```
 `dist/` includes everything under `public/` verbatim (Vite copies it
-unconditionally) — if `public/tiles/*.pmtiles` exists locally, **strip it
-from the `gh-pages` checkout before committing** (`rm -rf tiles/` after the
-`cp`, before `git add`). Production tiles are served cross-origin from
-Supabase Storage / R2, not from the static host, and a 44–131 MB file in a
-git branch either fails GitHub's 100 MB single-file push limit or bloats the
-branch for no reason.
+unconditionally). If more than one `public/tiles/*.pmtiles` file exists
+locally (e.g. the untracked dev `london.pmtiles` alongside the tracked
+production `london-z14.pmtiles` — see the Tiles section below for why
+production is same-origin, not third-party-hosted), **strip everything
+except the one production actually uses** before committing to `gh-pages`:
+```bash
+rm -f tiles/london.pmtiles tiles/london-inner.pmtiles   # keep tiles/london-z14.pmtiles
+```
+Shipping the untracked 131 MB dev archive would fail GitHub's 100 MB
+single-file push limit; shipping a stale interim one just wastes branch
+space.
 
 Then enable Pages on that branch:
 ```bash
@@ -285,78 +290,105 @@ items pass against the live URL, verified with a scripted Playwright
   `.github/**` belongs to a separate CD-workflow effort; see step 8's
   "Confirmed working, branch path").
 
-### Tiles: interim inner-London extract (free-tier workaround)
+### Tiles: final architecture — in-repo maxzoom-14, same-origin
 
-`public/tiles/london.pmtiles` (~131 MB) cannot be uploaded to free-tier
-Supabase Storage — see step 5's correction (hard 50 MiB cap, HTTP 402 on
-any attempt to raise it, confirmed via the Management API). Production
-currently serves a smaller **inner-London-only** extract instead, built with
-the `pmtiles` CLI (same tool `scripts/fetch-tiles.sh` uses, not modified):
+Production serves tiles from the **same origin as the app shell**
+(`https://torenander.github.io/interactive-map/tiles/london-z14.pmtiles`),
+not from a third-party host. There is no cross-origin fetch, no CORS surface,
+and nothing for a browser's connection/preflight handling to get wrong for
+this request path.
 
+**Why not the full `london.pmtiles` (131 MB, maxzoom 15) or a third-party
+host:**
+- Free-tier Supabase Storage caps uploads at 50 MiB (step 5's correction,
+  confirmed via the Management API returning HTTP 402) — the full archive
+  can't be uploaded there at all.
+- An interim inner-London-only extract (`london-inner.pmtiles`, 44.6 MB,
+  bbox `-0.26,51.435,0.07,51.575`) was deployed briefly on Supabase Storage
+  to unblock a first field-test. It worked in scripted verification (curl
+  206 + magic bytes, curl CORS headers, one successful real-WebKit
+  non-opaque Range fetch) but the **live deployed site then failed
+  intermittently in real WebKit** — `fetch()` to that URL threw
+  `TypeError: Load failed` on some page loads. CORS preflight was
+  independently re-checked and is correct (`OPTIONS` returns
+  `access-control-allow-headers: range` etc.), so the underlying cause
+  (likely resource contention between the SW's full-file background fetch
+  and dozens of concurrent per-tile range fetches, or Cloudflare-edge
+  behavior under WebKit specifically) was never fully pinned down — it
+  wasn't worth the time once a same-origin option removed the entire
+  failure class. **This interim object has been deleted from the bucket**
+  (`DELETE /storage/v1/object/tiles/london-inner.pmtiles`); do not expect it
+  to still exist if you go looking.
+- Cloudflare R2 was considered and **rejected by the user** — R2 (and any
+  other usage-billed cloud storage) is off the table; the user does not want
+  uncapped-billing exposure. Do not set one up. If this file is ever
+  revisited, the free, no-card alternative is **Backblaze B2** (10 GB free
+  storage, no payment method required to sign up, S3-compatible API,
+  CORS you configure yourself) — undocumented here beyond this pointer since
+  it was never built.
+- A paid Supabase Pro plan (~$25/mo) would also lift the 50 MiB cap but was
+  likewise not chosen, for the same reason.
+
+**What's actually deployed:** a maxzoom-14 (one zoom level below the 131 MB
+dev archive's maxzoom-15) extract of the same Greater London bbox
+`scripts/fetch-tiles.sh` uses (that script itself is unmodified and still
+produces the untracked, maxzoom-15, local-dev `public/tiles/london.pmtiles`):
 ```bash
-pmtiles extract https://build.protomaps.com/<YYYYMMDD>.pmtiles public/tiles/london-inner.pmtiles \
-  --bbox="-0.26,51.435,0.07,51.575" --maxzoom=15
+pmtiles extract https://build.protomaps.com/<YYYYMMDD>.pmtiles public/tiles/london-z14.pmtiles \
+  --bbox="-0.510375,51.28676,0.334015,51.691874" --maxzoom=14
 ```
+This produced a 55.9 MB archive — under git's 100 MB single-blob hard limit
+(GitHub prints a harmless ">50 MB" advisory warning on push suggesting Git
+LFS; ignore it, LFS is unnecessary at this size and adds its own quota
+concerns). It **is committed to the repo** at
+`public/tiles/london-z14.pmtiles` — `.gitignore`'s blanket
+`public/tiles/*.pmtiles` rule has a `!public/tiles/london-z14.pmtiles`
+negation carved out for exactly this one file; the dev/local
+`london.pmtiles` stays untracked as before.
 
-This bbox covers inner London (roughly Travelcard zones 1–3, centred on
-Charing Cross — inside the default map centre and every existing e2e test's
-geolocation mock) and produced a 44.6 MB archive, safely under the 50 MiB
-cap. **Areas outside this bbox render with no basemap detail** — expected
-and acceptable for an interim deploy; this is a real limitation to be aware
-of, not a bug.
+Vite copies everything under `public/` into `dist/` verbatim, so this file
+ships to `dist/tiles/london-z14.pmtiles` automatically and is served by
+GitHub Pages same-origin — confirmed with a real `GET` + `Range: bytes=0-15`
+against the live URL: `HTTP/2 206`, `content-range: bytes 0-15/55891073`,
+correct `PMTiles` magic bytes. (A `HEAD`/`curl -I` request against a Range
+header does **not** reliably show `206`/`content-range` — GitHub Pages, like
+most servers, only slices the body on a real `GET`; don't use `-I` to verify
+range support.)
 
-Uploaded to the existing public `tiles` bucket in the same Supabase project:
+Build sets `VITE_TILES_URL` to a same-origin relative path, not a full URL:
 ```bash
-curl -X POST "https://hqjrrkoaccgbueinuvjv.supabase.co/storage/v1/object/tiles/london-inner.pmtiles" \
-  -H "Authorization: Bearer <service-role-key>" -H "apikey: <service-role-key>" \
-  -H "Content-Type: application/octet-stream" --data-binary @public/tiles/london-inner.pmtiles
+VITE_TILES_URL=/interactive-map/tiles/london-z14.pmtiles
 ```
-Public URL (the `VITE_TILES_URL` actually used for the current build):
+`src/map/style.ts` wraps this as `pmtiles://${VITE_TILES_URL}`, which
+resolves relative to the document's own origin — no hardcoded host. `src/sw.ts`'s
+`isPmtilesRequest` matches this via its pre-existing same-origin fallback
+(any request path ending in `.pmtiles`), unchanged from the local-dev
+behavior — no code change was needed for the same-origin case, only the
+build-time env var.
+
+**Deploying `dist/` to `gh-pages` needs one manual step beyond step 8's
+generic sequence:** `public/` in this repo contains three `*.pmtiles` files
+locally (the untracked dev `london.pmtiles`, an untracked leftover
+`london-inner.pmtiles` from the interim deploy, and the tracked
+`london-z14.pmtiles`) and Vite copies *all three* into `dist/tiles/`
+regardless of which one `VITE_TILES_URL` points at. Only the production one
+should reach the `gh-pages` branch:
+```bash
+# after cp -r dist/. into the gh-pages worktree, before git add:
+rm -f tiles/london.pmtiles tiles/london-inner.pmtiles
 ```
-https://hqjrrkoaccgbueinuvjv.supabase.co/storage/v1/object/public/tiles/london-inner.pmtiles
-```
-Verified empirically before wiring it in: `curl -r 0-15` → HTTP 206 with
-`PMTiles` magic bytes; `curl -H "Origin: https://torenander.github.io" -r 0-15`
-→ `access-control-allow-origin: *` present on the same response; a real
-WebKit browser (Playwright) `fetch()` with a `Range` header from an
-`https://torenander.github.io` document origin → `response.type === "cors"`
-(not `"opaque"`) with the correct body. One red herring during this
-verification: isolated single-digit-to-tens-of-MB range fetches against this
-URL intermittently threw `TypeError: Load failed` in WebKit and then
-succeeded identically on immediate retry, with no correlation to the
-requested range size — this was transient network flakiness in the
-verification environment, not a defect in the bucket, CORS config, or
-`src/sw.ts`; the full live-site smoke suite (below) passed clean on the
-retry.
+Leaving the others in would either fail GitHub's 100 MB push limit
+(`london.pmtiles` is 131 MB) or just waste branch space for a file nothing
+references.
 
-**Upgrade path — full Greater London archive via Cloudflare R2:** the user
-has chosen R2 (free tier, S3-compatible, no per-file size cap, CORS
-configured by you) over a paid Supabase plan for serving the full
-`london.pmtiles`. Procedure, ready to execute the moment
-`~/.areamap-r2.env` (with `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` /
-`R2_SECRET_ACCESS_KEY`) exists:
-
-1. Create bucket `areamap-tiles` via the S3 API
-   (`https://<account-id>.r2.cloudflarestorage.com`, `aws` CLI or a small
-   script using the R2 credentials — never echo the secret key).
-2. Upload `public/tiles/london.pmtiles` (131 MB; use multipart if the
-   tooling wants it).
-3. Set the bucket's CORS policy: allow origin
-   `https://torenander.github.io`, methods `GET`+`HEAD`, allowed header
-   `Range`, exposed headers `Content-Range`, `Accept-Ranges`, `ETag`, a
-   generous max-age.
-4. Enable the bucket's public `r2.dev` access — this is a Cloudflare
-   API/dashboard action, not S3; use the Cloudflare API with the same token
-   if it has permission, otherwise the dashboard toggle is Bucket → Settings
-   → Public access → allow `r2.dev` subdomain.
-5. Re-run the same three-part empirical verification as above (curl 206 +
-   magic bytes, curl CORS headers, real-browser WebKit Range fetch reading a
-   non-opaque body) against the `r2.dev` URL before trusting it.
-6. Rebuild with `VITE_TILES_URL=<r2.dev URL>`, redeploy to `gh-pages`, re-run
-   the smoke suite.
-
-`r2.dev` URLs are rate-limited by Cloudflare; a custom domain in front of the
-bucket is the documented upgrade from there if traffic grows.
+**Precache check:** `vite.config.ts`'s `VitePWA({ injectManifest: { globPatterns: [...] } })`
+does not include `.pmtiles` in its glob, so the service worker's install-time
+precache manifest never includes this 56 MB file (confirmed:
+`precache 10 entries (2211 KiB)` at build time, and a runtime check of
+`caches.keys()`/`cache.keys()` on the live site found it only in the
+`pmtiles-v1` runtime range-cache, never in the `workbox-precache-v2-*`
+cache). It's fetched on demand via `src/sw.ts`'s range-request route, exactly
+as the cross-origin case was designed to work, just same-origin now.
 
 ### Auth
 
@@ -364,7 +396,7 @@ bucket is the documented upgrade from there if traffic grows.
 `{"mailer_autoconfirm": true}`) — see step 6's correction. No dashboard
 step was needed for this deploy.
 
-### Smoke test results
+### Smoke test results (final, z14 same-origin deploy)
 
 Scripted (Playwright, WebKit, iPhone 14 device profile, 390×844 viewport)
 against the live URL, using a disposable admin-created user (`email_confirm:
@@ -375,23 +407,29 @@ and zero remaining matching users post-cleanup):
 |---|---|
 | HTTPS load, `#root` attached | 200, pass |
 | Map canvas renders (non-zero size) | pass |
-| Vector tiles decode and paint | pass (1679 rendered features, 0 page errors) |
+| Vector tiles decode and paint at Charing Cross (default centre) | pass (1688 rendered features, 0 page errors) |
+| Vector tiles decode and paint at Croydon (`jumpTo`, well outside the old interim bbox's southern edge) | pass (25 rendered features) — proves real Greater-London-wide coverage, not just the previously-covered inner zone |
 | Sign-in (hosted auth, confirm-email off) | pass |
 | Draw + rate + save round trip | pass |
 | Reload → area still present | pass (1 row via admin query) |
 | Service worker registered and controlling on reload | pass, scope `https://torenander.github.io/interactive-map/` |
 | Manifest fetchable, correct `start_url`/`scope` | pass, both `/interactive-map/` |
+| pmtiles file absent from the precache manifest (only in the runtime range-cache) | pass |
 | Cleanup (area rows + test user deleted) | pass, verified 0 remaining |
 
-Screenshots: `/tmp/deploy-smoke/01-map-loaded.png`,
-`02-area-saved.png`, `03-after-reload.png`.
+Screenshots: `/tmp/deploy-smoke/01-map-loaded-z14.png`,
+`02-croydon-outside-inner-bbox.png`, `03-area-saved-z14.png`,
+`04-after-reload-z14.png`. (Superseded interim-deploy screenshots from the
+Supabase-hosted stage: `01-map-loaded.png`, `02-area-saved.png`,
+`03-after-reload.png`.)
 
 One item from the original checklist above (offline reload with the
 background full-file cache already warm) was not re-verified independently
 in this pass — it's covered by the existing `offline-map.spec.ts` e2e test
-against the same `src/sw.ts` code path, and the interim tiles URL uses the
-same cross-origin CORS route that test exercises against a fixture; not
-re-run against the live bucket specifically.
+against the same `src/sw.ts` code path; not re-run against the live
+same-origin file specifically, though same-origin removes the one variable
+(cross-origin CORS/opaque-response handling) that `offline-map.spec.ts`'s
+same-origin fixture couldn't already exercise.
 
 ### Secrets handling
 
