@@ -57,6 +57,8 @@ A trigger (or edge function) on insert/update of `areas.geom` populates `area_ce
 
 Not client side: an offline client, a stale build or a second client would each produce a slightly different index, and the drift is silent. Server-side derivation means one implementation and one truth.
 
+**Superseded (2026-09-10).** The "trigger" half of this never became real: `h3` / `h3_postgis` are not available as Postgres extensions in any Supabase Postgres image, local or hosted — verified directly against `supabase/postgres:17.6.1.167` and `:15.14.1.170`, and against upstream (feature requests `supabase/postgres#245` and `#664`, org discussion `#9687`, open and unresolved since 2022). A `h3_polygon_to_cells` trigger cannot exist on this stack. The "or edge function" alternative this section already named is now the actual, single implementation: `supabase/functions/save-area` uses `h3-js` to compute the cell set and is the sole write path for `areas`. `area_cells.h3_index` is plain `text` (h3-js's hex string), not the `h3index` type. The invariant this section argues for is unchanged — one server-side implementation, one truth — direct client writes to `areas` are still blocked by RLS; only the edge function, running with the caller's JWT, can write successfully.
+
 ## Delivery — PWA
 
 Requirements are geolocation, touch input and offline tile cache. All three are web platform features. A native shell adds app store review, two codebases and signing overhead for no capability gain.
