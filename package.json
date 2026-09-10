@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@protomaps/basemaps": "^5.7.2",
+    "@supabase/supabase-js": "^2.116.0",
     "maplibre-gl": "^6.9.0",
     "pmtiles": "^4.5.0",
     "react": "^19.2.8",
