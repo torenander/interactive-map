@@ -1,29 +1,22 @@
--- G2 migration 0002 — cell derivation. Verbatim from docs/DATA-MODEL.md § Migration 0002,
--- pending verification against a local `supabase db reset` (blocked_by Docker at authoring
--- time — see docs/TASKS-G2.md Task 3). If h3-pg's extension names or the
--- h3_polygon_to_cells signature differ locally, fix the call below and document the change
--- here with the reason, keeping the semantics identical: derive cells from new.geom at
--- resolution 10.
-create or replace function public.derive_area_cells()
-returns trigger
-language plpgsql
-security definer
-set search_path = public, extensions
-as $$
-declare
-  res smallint := 10;
-begin
-  delete from public.area_cells where area_id = new.id;
-
-  insert into public.area_cells (area_id, h3_index, resolution)
-  select new.id, cell, res
-  from h3_polygon_to_cells(new.geom::geometry, res) as cell
-  on conflict do nothing;
-
-  return new;
-end;
-$$;
-
-create trigger areas_derive_cells
-after insert or update of geom on public.areas
-for each row execute function public.derive_area_cells();
+-- G2 migration 0002 — SUPERSEDED, intentionally a no-op.
+--
+-- Originally created a Postgres trigger (public.derive_area_cells) that called
+-- h3_polygon_to_cells to populate area_cells on insert/update of areas.geom, per
+-- docs/DATA-MODEL.md § Migration 0002.
+--
+-- DEVIATION (2026-09-10): the h3 / h3_postgis Postgres extensions do not exist in any
+-- Supabase Postgres image, local or hosted — verified directly (all extension control
+-- files in supabase/postgres:17.6.1.167 and :15.14.1.170 listed; postgis is present on
+-- both, h3/h3_postgis are present on neither) and against upstream (open feature requests
+-- supabase/postgres#245 and #664, org discussion #9687, unresolved since 2022). A
+-- Postgres-side trigger calling h3_polygon_to_cells cannot exist, so there is no
+-- version-drift signature to fix here.
+--
+-- Cell derivation now happens in supabase/functions/save-area, using h3-js. That edge
+-- function is the sole write path for public.areas, running with the caller's JWT so
+-- RLS (migration 0004) still governs every write. See
+-- docs/ARCHITECTURE.md § "Cell derivation runs server side" (superseded note) for the
+-- full rationale.
+--
+-- This migration is kept as an intentional no-op so the migration sequence 0001-0004
+-- still lines up with docs/DATA-MODEL.md; it applies cleanly and changes nothing.
