@@ -762,3 +762,37 @@ background fetch fills the cache and broadcasts a `tiles-cached` postMessage on
 completion; a warm cache still answers every range instantly. See
 `docs/TASKS-FIX-SW.md` for the mechanism and how `offline-map.spec.ts` now waits
 for that signal, deterministically, before cutting the network.
+
+---
+
+# Verification sweep and fixes — 2026-09-10
+
+Six independent verifier agents after G1-G5 completion: gate re-run, fresh-clone
+reproducibility, adversarial security/concurrency probe, test-honesty audit,
+touch-only field simulation, docs-vs-reality sweep. All five goal gates held. The
+sweep surfaced 16 findings; every one is fixed (fix logs: TASKS-FIX*.md):
+
+- save-area rebuilt around a single-transaction RPC (migration 0005): no more partial
+  writes on WORKER_LIMIT, no concurrency 400s, no silent cell-set corruption. Cell-count
+  cap validated before any write.
+- Sole write path is now a DATABASE guarantee (migration 0007): save_area_tx is
+  SECURITY DEFINER with explicit auth/ownership checks; INSERT/UPDATE revoked on areas,
+  all writes revoked on area_cells, for client roles. Comment capped at 2000 chars.
+- Server-owned timestamps and pinned dimension (migration 0006).
+- Ghost-click race dismissing the rating modal on touch draw-finish: fixed via
+  event-timestamp guard; touch-draw.spec.ts added (verified red pre-fix). Tap targets
+  raised to 44px; draw controls safe-area aware.
+- Service worker: pmtiles warm no longer blocks first paint (passthrough + background
+  fill, tiles-cached signal; non-blocking proven by assertion).
+- Bare `npm run test` fixed via vitest.config.ts include (was exiting 1 on e2e specs).
+- mvp-loop now asserts comment persistence. README rewritten (was pre-code skeleton
+  text). SPEC.md stale h3/trigger claims marked superseded. .env.example annotated.
+
+Final consolidated gates on the combined result, run by the lead: db reset 0001-0007,
+types diff, build, bare unit run (22/22), all five e2e suites (map-shell 7, mvp-loop,
+offline, offline-map, touch-draw), assert-pwa 10/10 — every command exit 0.
+
+Residual accepted risk, documented: with client-generated ids, a caller who already
+knows another user's area uuid can infer it is taken (their own save fails generically);
+guessing a v4 uuid is not a practical path, and server-generated ids would break offline
+idempotency.
