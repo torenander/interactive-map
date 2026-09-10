@@ -137,6 +137,7 @@ test('draw, rate, save, reload, edit, delete', async ({ page }) => {
   await page.mouse.click(cx, cy)
   await expect(page.getByTestId('rating-modal')).toBeVisible()
   await expect(page.getByTestId('rating-1')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('comment-input')).toHaveValue('Nice little square')
   await page.getByTestId('rating--1').click()
   await page.getByTestId('save-area').click()
   await expect(page.getByTestId('rating-modal')).toBeHidden()
@@ -151,6 +152,7 @@ test('draw, rate, save, reload, edit, delete', async ({ page }) => {
   await page.mouse.click(cx, cy)
   await expect(page.getByTestId('rating-modal')).toBeVisible()
   await expect(page.getByTestId('rating--1')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('comment-input')).toHaveValue('Nice little square')
 
   // Delete it.
   await page.getByTestId('delete-area').click()
