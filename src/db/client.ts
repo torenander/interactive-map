@@ -61,3 +61,50 @@ export async function saveArea(input: SaveAreaInput): Promise<SaveAreaResult> {
   if (error) throw error;
   return data as SaveAreaResult;
 }
+
+// Reading areas back: `areas.geom` is `geography(Polygon, 4326)`. PostgREST returns
+// geography columns as WKB hex by default — confirmed empirically against the local
+// stack — but requesting the table with `Accept: application/geo+json` makes PostgREST
+// do the ST_AsGeoJSON conversion server side and return a real GeoJSON FeatureCollection.
+// That avoids pulling in a WKB parser just to read shapes back. `deletes` are the one
+// direct client write per CLAUDE.md; everything else still goes through save-area.
+export type AreaFeature = {
+  type: "Feature";
+  geometry: { type: "Polygon"; coordinates: number[][][] };
+  properties: {
+    id: string;
+    rating: number;
+    comment: string | null;
+    created_at: string;
+  };
+};
+
+export async function fetchAreas(): Promise<AreaFeature[]> {
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) throw sessionError;
+  const token = sessionData.session?.access_token;
+  if (!token) return [];
+
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/areas?select=id,rating,comment,created_at,geom&order=created_at.asc`,
+    {
+      headers: {
+        apikey: supabaseAnonKey as string,
+        Authorization: `Bearer ${token}`,
+        Accept: "application/geo+json",
+      },
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`fetchAreas failed: ${res.status} ${await res.text()}`);
+  }
+  const geojson = (await res.json()) as { features: AreaFeature[] };
+  return geojson.features;
+}
+
+// The one direct write against `areas` — CLAUDE.md allows whole-area deletes to bypass
+// save-area since the FK cascade on area_cells (migration 0001) cleans up cells for free.
+export async function deleteArea(id: string): Promise<void> {
+  const { error } = await supabase.from("areas").delete().eq("id", id);
+  if (error) throw error;
+}
