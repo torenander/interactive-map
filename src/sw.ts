@@ -57,6 +57,22 @@ self.addEventListener('activate', (event) => {
 const PMTILES_CACHE = 'pmtiles-v1'
 const pmtilesInflight = new Map<string, Promise<void>>()
 
+// Cross-origin production tiles: VITE_TILES_URL, when set at build time,
+// points at the Supabase Storage public bucket object serving
+// london.pmtiles — a different origin than the app shell. vite-plugin-pwa's
+// injectManifest strategy builds this file with Vite, so import.meta.env is
+// resolved to a literal at build time same as any other module. Matching on
+// the exact configured URL (rather than widening the path pattern) keeps the
+// route from picking up unrelated cross-origin *.pmtiles requests.
+const CONFIGURED_TILES_URL = (import.meta.env.VITE_TILES_URL as string | undefined)?.trim()
+
+function isPmtilesRequest(url: URL): boolean {
+  if (CONFIGURED_TILES_URL && url.href === CONFIGURED_TILES_URL) return true
+  // Fallback: same-origin /tiles/*.pmtiles — local dev and every existing
+  // test use this unchanged default (VITE_TILES_URL unset).
+  return url.pathname.endsWith('.pmtiles')
+}
+
 async function notifyClients(message: { type: string; url: string }) {
   const clients = await self.clients.matchAll({ type: 'window' })
   for (const client of clients) client.postMessage(message)
@@ -70,9 +86,17 @@ async function notifyClients(message: { type: string; url: string }) {
 function warmPmtilesCache(url: string, cache: Cache): void {
   if (pmtilesInflight.has(url)) return
   const pending = (async () => {
-    // A fresh Request with no Range header — we want the whole file.
-    const response = await fetch(new Request(url))
+    // A fresh Request with no Range header — we want the whole file. Explicit
+    // 'cors' mode: for the cross-origin production case (Supabase Storage
+    // public bucket) this must be a readable response, not opaque — an
+    // opaque response's body can't be sliced by workbox-range-requests, so
+    // caching one would leave every subsequent range request permanently
+    // broken. Same-origin requests are unaffected by the explicit mode.
+    const response = await fetch(new Request(url), { mode: 'cors' })
     if (!response.ok) throw new Error(`pmtiles background fetch failed: ${response.status}`)
+    if (response.type === 'opaque') {
+      throw new Error(`pmtiles background fetch returned an opaque response for ${url}`)
+    }
     await cache.put(url, response)
     await notifyClients({ type: 'tiles-cached', url })
   })()
@@ -84,7 +108,7 @@ function warmPmtilesCache(url: string, cache: Cache): void {
 }
 
 registerRoute(
-  ({ url, request }) => request.method === 'GET' && url.pathname.endsWith('.pmtiles'),
+  ({ url, request }) => request.method === 'GET' && isPmtilesRequest(url),
   async ({ request, url }) => {
     const cache = await caches.open(PMTILES_CACHE)
     const full = await cache.match(url.href)
