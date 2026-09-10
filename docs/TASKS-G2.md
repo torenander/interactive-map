@@ -23,35 +23,39 @@ need it are flagged; they are authored regardless and verified as soon as Docker
 
 ---
 
-## [ ] Task 1 — Supabase project scaffold
+## [x] Task 1 — Supabase project scaffold
 
-- [ ] **Step 1: `npx supabase init`** to produce `supabase/config.toml`.
-- [ ] **Step 2: `.env.example`** documenting `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (local stack defaults).
-- [ ] **Step 3: Commit** — `chore: init supabase project scaffold`.
+- [x] **Step 1: `npx supabase init`** to produce `supabase/config.toml`.
+- [x] **Step 2: `.env.example`** documenting `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (local stack defaults).
+- [x] **Step 3: Commit** — `chore: init supabase project scaffold`.
 
-## [ ] Task 2 — Migration 0001: tables
+## [~] Task 2 — Migration 0001: tables
 
-- [ ] **Step 1:** `supabase/migrations/0001_tables.sql`, verbatim from `docs/DATA-MODEL.md` § Migration 0001.
-- [ ] **Step 2:** Commit — `feat: areas and area_cells tables`.
+- [x] **Step 1:** `supabase/migrations/0001_tables.sql`, verbatim from `docs/DATA-MODEL.md` § Migration 0001.
+- [x] **Step 2:** Commit — `feat: areas and area_cells tables`.
+- [ ] Not yet verified against a real `db reset` — Docker unavailable at authoring time.
 
-## [ ] Task 3 — Migration 0002: cell derivation trigger
+## [~] Task 3 — Migration 0002: cell derivation trigger
 
-- [ ] **Step 1:** `supabase/migrations/0002_derive_cells.sql`, verbatim from `docs/DATA-MODEL.md` § Migration 0002.
-- [ ] **Step 2 (needs Docker):** `npx supabase db reset`. If it errors on the H3 extension name or
-      `h3_polygon_to_cells` signature, fix the call in this migration only, preserving the
-      semantics (derive cells from `new.geom` at resolution 10), and record the change with an
-      inline SQL comment plus a note here.
-- [ ] **Step 3:** Commit — `feat: derive area_cells from geometry via trigger`.
+- [x] **Step 1:** `supabase/migrations/0002_derive_cells.sql`, verbatim from `docs/DATA-MODEL.md` § Migration 0002.
+- [ ] **Step 2 (needs Docker):** `npx supabase db reset`. Docker was not running at authoring
+      time — NOT RUN. If it errors on the H3 extension name or `h3_polygon_to_cells`
+      signature, fix the call in this migration only, preserving the semantics (derive cells
+      from `new.geom` at resolution 10), and record the change with an inline SQL comment plus
+      a note here.
+- [x] **Step 3:** Commit — `feat: derive area_cells from geometry via trigger`.
 
-## [ ] Task 4 — Migration 0003: updated_at trigger
+## [~] Task 4 — Migration 0003: updated_at trigger
 
-- [ ] **Step 1:** `supabase/migrations/0003_touch_updated_at.sql`, verbatim from `docs/DATA-MODEL.md` § Migration 0003.
-- [ ] **Step 2:** Commit — `feat: maintain updated_at via trigger`.
+- [x] **Step 1:** `supabase/migrations/0003_touch_updated_at.sql`, verbatim from `docs/DATA-MODEL.md` § Migration 0003.
+- [x] **Step 2:** Commit — `feat: maintain updated_at via trigger`.
+- [ ] Not yet verified against a real `db reset` — Docker unavailable at authoring time.
 
-## [ ] Task 5 — Migration 0004: row-level security
+## [~] Task 5 — Migration 0004: row-level security
 
-- [ ] **Step 1:** `supabase/migrations/0004_rls.sql`, verbatim from `docs/DATA-MODEL.md` § Migration 0004.
-- [ ] **Step 2:** Commit — `feat: enable RLS on areas and area_cells`.
+- [x] **Step 1:** `supabase/migrations/0004_rls.sql`, verbatim from `docs/DATA-MODEL.md` § Migration 0004.
+- [x] **Step 2:** Commit — `feat: enable RLS on areas and area_cells`.
+- [ ] Not yet verified against a real `db reset` — Docker unavailable at authoring time.
 
 ## [ ] Task 6 — Generate types (needs Docker)
 
