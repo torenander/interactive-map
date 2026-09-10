@@ -76,7 +76,8 @@ for areas. Contract:
   cells to `public.save_area_tx` (migration 0005) in a single call, which replaces the
   area's cells wholesale (delete + insert) inside one transaction. Never appends.
 - Rejects a polygon deriving more than 5,000 res-10 cells (~75 km²) with a 422, before
-  any write — see migration 0005 for why the ceiling exists and how it was chosen.
+  any write — see migration 0005 for why the ceiling exists and how it was chosen — and
+  a comment over 2,000 characters likewise (migration 0007).
 - Every "you cannot write this id" outcome returns the same `404 {"error": "Area not
   found or not writable"}`, so another user's area id is not distinguishable from any
   other unwritable one by message or status.
@@ -154,10 +155,31 @@ which makes "last-write-wins on `updated_at`" meaningless. `areas` also gains
 `check (dimension = 'overall')`, so the CLAUDE.md pin is enforced rather than conventional.
 Widening it later is one migration.
 
+## Migration 0007 — sole write path, comment cap
+
+`save_area_tx` becomes `security definer` and the client roles lose their write grants:
+`insert, update` on `areas` and `insert, update, delete` on `area_cells` are revoked from
+`authenticated` and `anon`. "All writes go through save-area" stops being a code
+convention and becomes a privilege. `service_role` keeps everything — it is the
+administrative path and never reaches a browser.
+
+`security definer` means RLS no longer polices the statements inside the function (the
+owner bypasses it), so migration 0007 restates every guarantee RLS was making, explicitly:
+the caller must be authenticated; `user_id` is taken from `auth.uid()` and has no
+parameter; the conflict path only updates a row whose `user_id` already matches, and
+raises the same generic error otherwise, so nothing about another user's rows leaks; cells
+are written only for the row the upsert returned. The ownership test is a `where` clause
+on the upsert rather than a preceding `select` because a separate read would race two
+callers for one fresh id.
+
+Also adds `check (comment is null or char_length(comment) <= 2000)` — a 1 MB comment was
+accepted before. `save-area` mirrors the limit with a 422 so the client gets a clean
+rejection rather than a constraint violation.
+
 ## Rules
 
 - **Geometry wins.** If `area_cells` and `areas.geom` disagree, rebuild the cells. Never reconcile in the other direction.
-- **No client-side cell writes.** Derivation is server side so there is exactly one implementation. An offline or stale client would index differently and the drift would be silent.
+- **No client-side cell writes — enforced by the database since migration 0007.** Derivation is server side so there is exactly one implementation; an offline or stale client would index differently and the drift would be silent. This is no longer a convention: `authenticated` and `anon` hold no INSERT/UPDATE on `areas` and no INSERT/UPDATE/DELETE on `area_cells`, so `save_area_tx` is the only thing that can write either table. SELECT stays granted (RLS still scopes it), and DELETE on `areas` stays granted because whole-area deletes going direct is the documented contract.
 - **All schema changes via `supabase/migrations/`.** No dashboard edits. Regenerate types after every migration:
   ```bash
   npx supabase gen types typescript --local > src/db/types.ts

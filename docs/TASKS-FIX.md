@@ -82,7 +82,66 @@ a few milliseconds ahead of PostgREST's clock, which rejects it with "JWT issued
 future". `beforeAll` waits for the token to be accepted once per user rather than
 retrying inside the concurrency tests, where a retry would change what is measured.
 
-## [~] Task 6 — Negative control
+## [~] Task 7 — Sole write path as a database guarantee (scope addendum)
+
+**Files:** `supabase/migrations/0007_sole_write_path.sql`,
+`supabase/functions/save-area/index.ts`
+
+- [x] `save_area_tx` recreated as `security definer` with `set search_path`, and the four
+      compensating checks written explicitly because RLS no longer applies inside it:
+      authenticated caller or raise; `user_id` from `auth.uid()` with no input parameter;
+      the conflict path guarded by `where a.user_id = v_uid` plus a raise when nothing
+      comes back; cells written only for the row the upsert returned.
+- [x] The ownership guard is a `where` clause on the upsert, not a preceding `select` —
+      a read-then-check would race two callers for one fresh id, and the loser would
+      update the winner's row. Same errcode as the other refusals, so the F1
+      normalisation is not reintroduced (there is a test for exactly that).
+- [x] `revoke insert, update on public.areas` and
+      `revoke insert, update, delete on public.area_cells` from `authenticated, anon`.
+      SELECT stays (RLS still scopes it); DELETE on `areas` stays (documented contract,
+      and the cascade needs no grant on `area_cells`). `service_role` keeps everything.
+- [x] Appended as 0007 rather than rewriting 0005: 0005 and 0006 are already committed,
+      and DATA-MODEL.md's own rule is to append. 0005 stays readable as "why one
+      transaction", 0007 as "why one writer".
+
+## [~] Task 8 — Comment cap (scope addendum)
+
+**Files:** `supabase/migrations/0007_sole_write_path.sql`,
+`supabase/functions/save-area/index.ts`
+
+- [x] `check (comment is null or char_length(comment) <= 2000)` on `areas` — 1 MB of text
+      was accepted before. 2000 characters is about a page of prose; a field note is a
+      sentence or two.
+- [x] `MAX_COMMENT_CHARS = 2000` in `save-area`, checked with the other guards before any
+      write, returning 422 with the limit stated.
+
+## [~] Task 9 — Test changes forced by Task 7
+
+**Files:** `tests/unit/schema.test.ts`, `tests/unit/save-area.test.ts`
+
+Three existing tests wrote `areas` directly as a signed-in client, which is now refused.
+Each was made **stronger**, never weaker — every one keeps its original assertion and adds
+the privilege assertion in front of it:
+
+- [x] schema.test.ts "rating = 3 is rejected by the database": asserts the client is
+      refused (42501) AND that the same insert through the service role still trips
+      `check (rating between -2 and 2)` (23514). The constraint is still what is being
+      tested; it is now also proven that the client cannot reach it.
+- [x] save-area.test.ts timestamps: client insert refused (42501) AND forged timestamps
+      still lose to the server clock on the service-role path, `created_at` still frozen
+      across an update.
+- [x] save-area.test.ts dimension: client update refused (42501) AND the constraint still
+      rejects `'noise'` for a role that can write.
+- [x] New: every revoked path attempted and refused (insert/update areas, insert/update/
+      delete area_cells, including a garbage `h3_index`), nothing landed, and the two
+      paths that must stay open still work — SELECT, and a direct whole-area DELETE whose
+      cascade still clears the cells.
+- [x] New: comment of 2001 characters → 422 with the pre-existing row byte-identical
+      afterwards, 2000 characters → 200 (so the guard is a limit, not a blanket refusal),
+      and the constraint rejects an over-long comment on the service-role path.
+- [x] The RLS isolation tests in schema.test.ts are untouched and still pass.
+
+## [~] Task 10 — Negative control
 
 Running `tests/unit/save-area.test.ts` against the pre-fix `save-area` (both migrations
 applied, so the F5 tests legitimately still pass) fails 4 of 6:
@@ -93,6 +152,12 @@ applied, so the F5 tests legitimately still pass) fails 4 of 6:
 × oversized polygon                → 546 WORKER_LIMIT, row already mutated    (F2)
 × another user's id                → 400 with the verbatim RLS message        (F1)
 ```
+
+Removing `0007_sole_write_path.sql` and resetting fails the four addendum tests for the
+right reasons — no privilege error where one is required (`expected undefined to be
+'42501'`), the dimension update reaching the check constraint instead of being refused
+(`expected '23514' to be '42501'`), and the over-long comment accepted by the database
+(the edge function's own 422 still fires, since that half lives in the function).
 
 Note when reproducing: the local edge runtime runs `--policy=per_worker` and keeps the
 loaded module in a live worker. Editing a function file is not enough — the worker only
