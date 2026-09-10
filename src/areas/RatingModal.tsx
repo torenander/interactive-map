@@ -138,7 +138,9 @@ export default function RatingModal({
             data-testid="delete-area"
             disabled={saving}
             onClick={onDelete}
-            className="w-full rounded-lg py-2 text-sm font-medium text-red-600 disabled:opacity-50"
+            // min-h-11 (44px): field-UX tap-target minimum (verified touch bug) —
+            // was 36px tall. flex/items-center keeps the label centred at the new height.
+            className="flex min-h-11 w-full items-center justify-center rounded-lg text-sm font-medium text-red-600 disabled:opacity-50"
           >
             Delete area
           </button>
