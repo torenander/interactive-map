@@ -14,7 +14,10 @@ A goal is marked done only when every one of its `done_when` commands in `docs/O
 
 ---
 
-# G1 — Map shell
+# G1 — Map shell — exit criteria met 2026-09-10
+
+> Both `done_when` commands exit 0 (`npm run build`, `npm run test:e2e -- tests/e2e/map-shell.spec.ts`, 7 tests).
+> Tasks stay `[~]` needs review: this file's legend reserves `[x]` for work a human has looked at.
 
 **Goal:** Render a MapLibre map of London from a self-hosted Protomaps `.pmtiles` file, with a working "centre on me" control.
 
@@ -631,7 +634,7 @@ git commit -m "feat: centre-on-me control in thumb reach"
 
 ---
 
-## [ ] Task 5 — Close out G1
+## [~] Task 5 — Close out G1
 
 No new behaviour. Runs the goal's exit criteria exactly as written and records
 the result.
@@ -639,7 +642,7 @@ the result.
 **Files:**
 - Modify: `docs/TASKS.md`
 
-- [ ] **Step 1: Run every `done_when` command from `docs/OBJECTIVES.md` § G1, unmodified**
+- [x] **Step 1: Run every `done_when` command from `docs/OBJECTIVES.md` § G1, unmodified**
 
 ```bash
 npm run build
@@ -652,7 +655,7 @@ Both must print `exit: 0`. If either fails, add tasks above and continue. Do not
 edit an assertion to make it pass — `docs/TESTING.md` forbids it and so does
 `docs/OBJECTIVES.md`.
 
-- [ ] **Step 2: Confirm nothing out of scope was built**
+- [x] **Step 2: Confirm nothing out of scope was built**
 
 ```bash
 ls src/ && grep -ril "supabase\|terra-draw\|serviceWorker" src/ tests/ || echo "no out-of-scope code: OK"
@@ -661,12 +664,12 @@ ls src/ && grep -ril "supabase\|terra-draw\|serviceWorker" src/ tests/ || echo "
 Expected: no matches. Drawing, Supabase, auth and offline caching are G1
 `out_of_scope`.
 
-- [ ] **Step 3: Mark the goal**
+- [x] **Step 3: Mark the goal**
 
 Change this section's heading to `# G1 — Map shell — done YYYY-MM-DD`, using the
 real date, and set every Task 1–5 marker to `[x]`. Only then.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/TASKS.md
