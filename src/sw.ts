@@ -25,66 +25,77 @@ self.addEventListener('activate', (event) => {
 })
 
 // ---------------------------------------------------------------------------
-// London basemap tiles: range-request caching.
+// London basemap tiles: range-request caching, non-blocking.
 //
 // pmtiles' FetchSource (node_modules/pmtiles/dist/esm/index.js) issues plain
 // `fetch(url, { headers: { range: 'bytes=<start>-<end>' } })` calls — a 16KB
 // header read, then directory reads, then per-tile reads. There is no single
 // "give me the whole file" request from the library itself.
 //
-// Strategy: on the first range request for a given .pmtiles URL, ignore the
-// incoming Range header and fetch the whole file once as a plain 200,
-// caching it under the plain URL. Every request (including the one that
-// triggered the fetch) is then answered by slicing that cached full response
-// per its own Range header via workbox-range-requests. Concurrent range
-// requests that arrive before the first fetch resolves share one in-flight
-// promise instead of each starting their own 125MB download.
+// Strategy (revised — see docs/TASKS-FIX-SW.md): a warm cache answers every
+// range request instantly by slicing the cached full file via
+// workbox-range-requests, exactly as before. But a *cold* cache no longer
+// makes the request wait for a ~125MB download first — it passes the range
+// request straight through to the network, unchanged from pre-SW behaviour,
+// and separately kicks off (or joins) a single background full-file fetch
+// that fills the cache for every request after it. First paint on a cold
+// cache — first visit, or any visit after eviction — is therefore as fast as
+// it would be with no service worker at all; the offline guarantee still
+// holds once that background fill completes.
 //
-// A `Response` body can only be read once. A tile-heavy warm load fires
-// dozens of concurrent range requests for the same URL, all racing on the
-// same in-flight fetch — an earlier version of this handler handed every
-// one of them the *same* fetched Response object, and the second reader
-// always failed (surfacing as a 416 from workbox-range-requests, whose
-// `createPartialResponse` swallows the read error into that status). The
-// fix: the in-flight promise only signals "the cache entry exists now";
-// every caller — including the one that triggered the fetch — gets its own
-// fresh `Response` via a separate `cache.match()` afterwards.
+// A `Response` body can only be read once. An earlier version of this
+// handler awaited one shared in-flight fetch and handed every concurrent
+// range request the *same* fetched Response object; the second reader always
+// failed (surfacing as a 416 from workbox-range-requests, whose
+// `createPartialResponse` swallows the read error into that status). This
+// version never shares a Response across requests: each range request that
+// misses the cache gets its own independent `fetch(request)`, and the
+// background fill is a separate fetch entirely, consumed only by
+// `cache.put`. The in-flight map here dedupes concurrent background-fill
+// *triggers* (so a burst of cold range requests starts one download, not
+// dozens), not response bodies.
 const PMTILES_CACHE = 'pmtiles-v1'
-const pmtilesInflight = new Map<string, Promise<boolean>>()
+const pmtilesInflight = new Map<string, Promise<void>>()
 
-async function getOrFetchFullPmtiles(url: string, cache: Cache): Promise<Response | null> {
-  const cached = await cache.match(url)
-  if (cached) return cached
+async function notifyClients(message: { type: string; url: string }) {
+  const clients = await self.clients.matchAll({ type: 'window' })
+  for (const client of clients) client.postMessage(message)
+}
 
-  let pending = pmtilesInflight.get(url)
-  if (!pending) {
-    pending = (async () => {
-      // A fresh Request with no Range header — we want the whole file.
-      const response = await fetch(new Request(url))
-      if (!response.ok) return false
-      await cache.put(url, response)
-      return true
-    })()
-    pmtilesInflight.set(url, pending)
-    void pending.finally(() => pmtilesInflight.delete(url))
-  }
-
-  const cachedOk = await pending.catch(() => false)
-  if (!cachedOk) return null
-  return (await cache.match(url)) ?? null
+// Fire-and-forget: fills the cache in the background, deduping concurrent
+// triggers for the same URL onto one download. Never awaited by the request
+// handler below — that would reintroduce the blocking behaviour this fix
+// removes. Broadcasts a `tiles-cached` message once the file is fully cached
+// so tests (and, eventually, UI) can observe completion without polling.
+function warmPmtilesCache(url: string, cache: Cache): void {
+  if (pmtilesInflight.has(url)) return
+  const pending = (async () => {
+    // A fresh Request with no Range header — we want the whole file.
+    const response = await fetch(new Request(url))
+    if (!response.ok) throw new Error(`pmtiles background fetch failed: ${response.status}`)
+    await cache.put(url, response)
+    await notifyClients({ type: 'tiles-cached', url })
+  })()
+  pmtilesInflight.set(url, pending)
+  void pending.catch(() => {
+    // Network unreachable or fetch failed — leave the cache as-is. The next
+    // range request that misses the cache will retry this on its own.
+  }).finally(() => pmtilesInflight.delete(url))
 }
 
 registerRoute(
   ({ url, request }) => request.method === 'GET' && url.pathname.endsWith('.pmtiles'),
   async ({ request, url }) => {
     const cache = await caches.open(PMTILES_CACHE)
-    const full = await getOrFetchFullPmtiles(url.href, cache)
-    if (!full) {
-      // Network unreachable and nothing cached yet — let the request fail
-      // normally rather than fabricate a response.
-      return fetch(request)
+    const full = await cache.match(url.href)
+    if (full) {
+      // Warm cache: every range is answered instantly from the full file.
+      return createPartialResponse(request, full)
     }
-    return createPartialResponse(request, full)
+    // Cold cache: answer this request exactly like the network would, and
+    // let a background fetch fill the cache for next time.
+    warmPmtilesCache(url.href, cache)
+    return fetch(request)
   },
 )
 

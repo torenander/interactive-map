@@ -754,7 +754,11 @@ cached. Two real bugs fixed during verification: shared Response body corruption
 concurrent warm-load fetches, and WebKit's SW not intercepting dedicated-worker script
 loads (MapLibre's worker now fetched via fetch() and handed over as a Blob URL).
 
-**Known trade-off, flagged:** the first load (and any load after cache eviction)
-downloads the full ~125 MB archive before tiles paint. Genuine offline capability was
-chosen over fast first paint. A background-warm variant (serve ranges passthrough
-while filling the cache) is the obvious refinement if field use finds this painful.
+**Known trade-off, fixed:** the first load (and any load after cache eviction) used
+to download the full ~125 MB archive before tiles painted — fine on localhost,
+minutes of blank map on cellular. `src/sw.ts` now passes cold-cache range requests
+straight through to the network (unchanged pre-SW first paint) while a single
+background fetch fills the cache and broadcasts a `tiles-cached` postMessage on
+completion; a warm cache still answers every range instantly. See
+`docs/TASKS-FIX-SW.md` for the mechanism and how `offline-map.spec.ts` now waits
+for that signal, deterministically, before cutting the network.

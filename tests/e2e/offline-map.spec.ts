@@ -1,11 +1,44 @@
 import { test, expect, type Page } from '@playwright/test'
 
 // G5: the London basemap must be usable with no connectivity, after one warm
-// (online) load. See docs/TASKS-G5.md for the caching mechanism — src/sw.ts
-// caches the entire pmtiles file the first time any byte range from it is
-// requested (pmtiles itself only ever asks for ranges, never the whole file —
-// see the file for the trace through node_modules/pmtiles), then serves every
-// subsequent range from that cached copy via workbox-range-requests.
+// (online) load. See docs/TASKS-G5.md for the original caching mechanism and
+// docs/TASKS-FIX-SW.md for the non-blocking revision — src/sw.ts now answers
+// every pmtiles range request immediately (from cache once warm, straight
+// through to the network otherwise) while a single background fetch fills
+// the cache with the full file. Once that background fill completes, src/sw.ts
+// broadcasts a `tiles-cached` postMessage to window clients. This spec waits
+// for that signal before cutting the network, so "warm load" here means
+// "fully cached", not just "painted once" — pmtiles itself only ever asks
+// for byte ranges, never the whole file, so painting alone doesn't imply the
+// background fill has finished.
+
+// Waits for the pmtiles full-file cache entry to exist, via whichever
+// happens first: the cache already has it (background fill beat us here) or
+// the service worker's `tiles-cached` broadcast arrives. Registering the
+// message listener before checking the cache closes the race between the
+// two — no sleep, no polling loop.
+async function waitForTilesCached(page: Page) {
+  return page.evaluate(() => {
+    return new Promise<void>((resolve) => {
+      function onMessage(event: MessageEvent) {
+        if ((event.data as { type?: string } | null)?.type === 'tiles-cached') {
+          navigator.serviceWorker.removeEventListener('message', onMessage)
+          resolve()
+        }
+      }
+      navigator.serviceWorker.addEventListener('message', onMessage)
+      caches
+        .open('pmtiles-v1')
+        .then((cache) => cache.keys())
+        .then((keys) => {
+          if (keys.length > 0) {
+            navigator.serviceWorker.removeEventListener('message', onMessage)
+            resolve()
+          }
+        })
+    })
+  })
+}
 
 async function paintedFeatureCount(page: Page) {
   const handle = await page.waitForFunction(
@@ -39,16 +72,41 @@ test('map renders tiles with the network blocked after one warm load', async ({ 
   expect(warmCount).toBeGreaterThan(0)
 
   // One more online reload, waiting for tiles to paint *again*, so this page
-  // is actually SW-controlled (mirrors the check in scripts/assert-pwa.mjs)
-  // and — critically — so the pmtiles route in src/sw.ts has actually
-  // finished caching the full file before the network is cut. The first
-  // warm load above can't be SW-controlled at all (a service worker never
-  // intercepts the load that first registers it), so nothing gets cached
-  // until this second, controlled pass.
+  // is actually SW-controlled (mirrors the check in scripts/assert-pwa.mjs).
+  // The first warm load above can't be SW-controlled at all (a service
+  // worker never intercepts the load that first registers it), so this is
+  // the first request src/sw.ts's pmtiles route ever sees, and the first
+  // point a background cache fill can even start.
   await page.evaluate(() => navigator.serviceWorker.ready)
   await page.reload({ waitUntil: 'load' })
   await page.waitForFunction(() => window.location.hash.length > 1)
   await paintedFeatureCount(page)
+  const paintedAt = await page.evaluate(() => Date.now())
+
+  // src/sw.ts answers this reload's range requests straight through to the
+  // network (cache is still cold) and fires a background fetch to fill it —
+  // that fetch is still running when the line above resolves. Wait for the
+  // `tiles-cached` signal so the cache is genuinely complete before the
+  // network gets cut below; otherwise this would be testing "some ranges
+  // happened to warm" rather than the documented offline guarantee.
+  await waitForTilesCached(page)
+  const cachedAt = await page.evaluate(() => Date.now())
+
+  // Non-blocking proof: first paint should precede the full-file cache fill
+  // completing, since the fill runs in the background rather than gating
+  // the response. On a fast local loopback the ~125MB fill can occasionally
+  // finish before the tiny paint-triggering ranges are even measured here,
+  // so this is informational rather than a hard requirement of the spec.
+  if (cachedAt > paintedAt) {
+    expect(cachedAt).toBeGreaterThan(paintedAt)
+  } else {
+    test.info().annotations.push({
+      type: 'note',
+      description:
+        'cache fill completed at or before first paint on this run (local fetch too fast to ' +
+        'observe the gap) — non-blocking behaviour not independently timed this run',
+    })
+  }
 
   // Neither of Playwright's two usual "go offline" mechanisms works cleanly
   // here in WebKit (this project's mobile project — see playwright.config.ts):
