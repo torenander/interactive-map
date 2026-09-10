@@ -675,3 +675,21 @@ real date, and set every Task 1–5 marker to `[x]`. Only then.
 git add docs/TASKS.md
 git commit -m "docs: G1 map shell complete"
 ```
+
+---
+
+# G2 — Schema and client — done 2026-09-10
+
+Task breakdown and verification log: `docs/TASKS-G2.md` (owned by teammate schema-g2).
+
+All three `done_when` commands exit 0, run twice — once by the implementing teammate,
+once independently by the lead: `npx supabase db reset`; `npx supabase gen types
+typescript --local | diff - src/db/types.ts` (byte-identical); `npm run test --
+tests/unit/schema.test.ts` (5/5 against live local Postgres, no mocks).
+
+**Architecture deviation, decided mid-goal:** h3-pg does not exist in any Supabase
+Postgres image, local or hosted, so the cell-derivation trigger was impossible on this
+stack. Derivation moved to the `save-area` edge function (h3-js, caller's JWT) — the
+alternative ARCHITECTURE.md § "Cell derivation runs server side" always allowed; see
+its superseded note and DATA-MODEL.md § Migration 0002 for the full contract.
+`area_cells.h3_index` became `text`.

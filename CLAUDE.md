@@ -12,7 +12,7 @@ MapLibre GL JS, Protomaps pmtiles, Terra Draw, Vite, React, TypeScript, Tailwind
 - Never tick a task box for work you have not watched run.
 - Do not build anything under a goal's `out_of_scope` or under "Not goals".
 - `areas.geom` is the source of truth; `area_cells` is derived. If they disagree, rebuild the cells from geometry.
-- Cell derivation is server side, in a trigger. Never write `area_cells` from the client, even though `h3-js` is a dependency.
+- All writes to `areas` go through the `save-area` edge function — the one place cells are derived (h3-js, server side). Never write `areas` or `area_cells` directly from the client; deletes of whole areas are the only direct call (FK cascade cleans cells).
 - `dimension` stays `'overall'`. No rating-dimension UI.
 - `rating` is -2..2 in the database; the UI emits only -1, 0, +1.
 - No geometry union, clipping or self-intersection repair. Overlap is a rendering concern: semi-transparent, newest on top.

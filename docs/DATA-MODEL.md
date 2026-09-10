@@ -24,15 +24,15 @@ Derived index. Recomputable from `areas.geom` at any time. Never written indepen
 | Column | Type | Notes |
 |---|---|---|
 | `area_id` | `uuid` | FK `areas(id)`, cascade delete |
-| `h3_index` | `h3index` | PK together with `area_id` |
+| `h3_index` | `text` | H3 cell id as h3-js's 15-char hex string. PK together with `area_id`. Plain text because the `h3index` type comes from h3-pg, which no Supabase Postgres image ships (see ARCHITECTURE.md § Cell derivation, superseded note) |
 | `resolution` | `smallint` | Default 10. Stored so a future resolution change is detectable |
 
 ## Migration 0001 — tables
 
 ```sql
 create extension if not exists postgis;
-create extension if not exists h3;
-create extension if not exists h3_postgis;
+-- h3 / h3_postgis deliberately absent: not available in any Supabase Postgres
+-- image, local or hosted. Cells are derived in the save-area edge function.
 
 create table public.areas (
   id          uuid primary key default gen_random_uuid(),
@@ -50,7 +50,7 @@ create index areas_user_idx on public.areas (user_id);
 
 create table public.area_cells (
   area_id     uuid not null references public.areas(id) on delete cascade,
-  h3_index    h3index not null,
+  h3_index    text not null,
   resolution  smallint not null default 10,
   primary key (area_id, h3_index)
 );
@@ -58,41 +58,31 @@ create table public.area_cells (
 create index area_cells_h3_idx on public.area_cells (h3_index);
 ```
 
-Verify the extension names before relying on this. `h3` and `h3_postgis` are the names in the `h3-pg` extension as packaged by Supabase, but the function signature has changed across versions. Run `npx supabase db reset` locally and fix the call in 0002 if it errors.
+## Migration 0002 — cell derivation (superseded to edge function)
 
-## Migration 0002 — cell derivation
+The trigger this migration originally specified cannot exist: `h3_polygon_to_cells`
+comes from the h3-pg extension, which is not available in any Supabase Postgres image,
+local or hosted (verified 2026-09-10; open upstream requests since 2022). The file
+`supabase/migrations/0002_derive_cells.sql` is kept as an intentional no-op comment so
+migration numbering still matches this document.
 
-```sql
-create or replace function public.derive_area_cells()
-returns trigger
-language plpgsql
-security definer
-set search_path = public, extensions
-as $$
-declare
-  res smallint := 10;
-begin
-  delete from public.area_cells where area_id = new.id;
+Derivation now lives in `supabase/functions/save-area/index.ts` — the sole write path
+for areas. Contract:
 
-  insert into public.area_cells (area_id, h3_index, resolution)
-  select new.id, cell, res
-  from h3_polygon_to_cells(new.geom::geometry, res) as cell
-  on conflict do nothing;
+- Input: `{ id, geom, rating, comment }` with a client-generated uuid as `id`, so a
+  retried call is an idempotent upsert.
+- Runs with the caller's JWT, not the service role — RLS applies as usual.
+- Computes the cell set with h3-js `polygonToCells` at resolution 10 and replaces the
+  area's cells wholesale (delete + insert). Never appends.
+- Whole-area deletes go straight to the table; the FK cascade removes cells.
 
-  return new;
-end;
-$$;
+Rebuild the whole index if the derivation logic ever changes: re-save each area
+through `save-area` (geometry is unchanged, cells recompute).
 
-create trigger areas_derive_cells
-after insert or update of geom on public.areas
-for each row execute function public.derive_area_cells();
-```
-
-Rebuild the whole index if the derivation logic ever changes:
-
-```sql
-update public.areas set geom = geom;
-```
+**Known limit:** `polygonToCells` is center-containment. A polygon smaller than one
+res-10 hexagon (~130 m across) can legitimately produce zero cells. Acceptable for
+the MVP — nothing reads cells yet — but any future cell-consuming feature must treat
+an empty cell set as "index absent", not "area absent".
 
 ## Migration 0003 — updated_at
 
@@ -148,7 +138,7 @@ RLS goes in before any real data exists. Enabling it on a populated table is whe
 Offline saves are held locally and flushed on reconnect.
 
 - Store in IndexedDB, not localStorage — geometry payloads exceed the localStorage budget quickly
-- Queue entries carry a client-generated `uuid` used as the row `id`, so a retry is idempotent
+- Queue entries carry a client-generated `uuid` used as the row `id`, and flush through the `save-area` edge function, so a retry is an idempotent upsert
 - Flush is last-write-wins on `updated_at`. Single-user, so real conflicts are rare; document the behaviour rather than building merge logic
 - The UI shows queued state explicitly. Never render a save as complete before the server has it
 
