@@ -735,3 +735,26 @@ Design notes: raw IndexedDB queue, injectable flush, queued areas render amber a
 live in a separate list so a server fetch cannot wipe an unflushed save; queueing
 only triggers on real network failure (FunctionsFetchError) — validation/auth errors
 still surface. Offline deletes are not queued (out of scope, surfaces normal error).
+
+---
+
+# G5 — Installable PWA with offline basemap — done 2026-09-10
+
+Task breakdown: `docs/TASKS-G5.md` (teammate pwa-g5, built in an isolated worktree,
+merged as 86d92c9). `done_when` per the amended G5 block (Lighthouse's PWA category no
+longer exists — see the dated note in docs/OBJECTIVES.md): `npm run build` exit 0;
+`node scripts/assert-pwa.mjs` exit 0 (10/10: manifest, icons 192/512, standalone, SW
+controls page, offline shell); `offline-map.spec.ts` exit 0 (tiles repaint with the
+network hard-blocked after one warm load). Full regression after merge: map-shell 7/7,
+mvp-loop 1/1, offline 1/1, unit 14/14, schema 3x clean.
+
+Mechanism: SW caches the full pmtiles archive on first range request and serves all
+subsequent range requests from cache (workbox-range-requests); glyphs/sprites runtime-
+cached. Two real bugs fixed during verification: shared Response body corruption on
+concurrent warm-load fetches, and WebKit's SW not intercepting dedicated-worker script
+loads (MapLibre's worker now fetched via fetch() and handed over as a Blob URL).
+
+**Known trade-off, flagged:** the first load (and any load after cache eviction)
+downloads the full ~125 MB archive before tiles paint. Genuine offline capability was
+chosen over fast first paint. A background-warm variant (serve ranges passthrough
+while filling the cache) is the obvious refinement if field use finds this painful.
