@@ -35,21 +35,16 @@ binaries are cached; the tile cache key is derived from the bbox/maxzoom constan
   free tier. Migrations 0001–0007 pushed, `save-area` edge function deployed, email
   auth on with confirm-email off (set via Management API). DB password:
   `~/.areamap-db-password` on Tor's machine (chmod 600), nowhere else.
-- **App shell**: GitHub Pages at `https://torenander.github.io/interactive-map/`
-  via a one-shot `gh-pages` branch deploy. **In flight**: the deploy agent was mid-run
-  at handoff — stage 1 is inner-London z15 tiles on Supabase Storage (free-tier 50 MiB
-  cap forces the smaller extract), stage 2 swaps to full Greater-London z14 tiles
-  committed in-repo (56 MB, same-origin, no third party). Live smoke tests (webkit,
-  390x844, real touch draw + save round-trip) gate each stage. If the URL above serves
-  the app, at least stage 1 completed.
-- **CD**: `.github/workflows/deploy.yml` on branch `cd`, built and proven
-  (guard-fails-loudly run on record), deliberately NOT merged. To activate once the
-  one-shot deploy is done and the tiles URL is final:
-  1. `gh variable set VITE_TILES_URL --body '<final tiles URL>'`
-  2. merge `cd` into main, push
-  3. switch Pages source: `gh api -X PUT repos/torenander/interactive-map/pages --input - <<< '{"build_type":"workflow"}'`
-  Repo variables `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are already set (anon
-  key is public by design; service_role is never stored anywhere client-side).
+- **App shell**: GitHub Pages at `https://torenander.github.io/interactive-map/` —
+  LIVE and verified (3x webkit render probes, full touch smoke suite). Tiles: full
+  Greater London at z14, committed in-repo as `public/tiles/london-z14.pmtiles`
+  (55.9 MB, same-origin — the interim Supabase Storage tiles and the whole cross-origin
+  CORS surface are gone; the interim storage object is deleted).
+- **CD**: ACTIVE. `.github/workflows/deploy.yml` on main; Pages source is
+  "GitHub Actions"; every push to main (except docs/*.md-only) builds with repo
+  variables (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`,
+  `VITE_TILES_URL=/interactive-map/tiles/london-z14.pmtiles`) and deploys. `ci.yml`
+  runs the full gate suite on the same push and is the authoritative quality signal.
 - **Runbook**: `docs/DEPLOY.md` — numbered, executed once, corrected where reality
   diverged. Its Production section gets the final URLs when the deploy agent finishes.
 
@@ -87,13 +82,13 @@ binaries are cached; the tile cache key is derived from the bbox/maxzoom constan
 
 ## Open items (all optional, none blocking)
 
-- Deploy agent's final report + phone ping to Tor (in flight, see above).
-- CD activation (three commands above) after the tiles URL is final.
+- Tor's login exists on the hosted instance (credentials in `~/.areamap-login`,
+  chmod 600; the password also appears once in the build session's transcript — rotate
+  via the Supabase dashboard or admin API if that matters).
 - Commit authorship is `tor.enander@redeploy.com` on a now-public repo; Tor declined
   a rewrite so far — re-offer before the repo is shared widely.
 - Next feature milestones live in `docs/OBJECTIVES.md` § Not goals (brush painting,
   open-data overlays, points/lines) — each needs a new goal block before any code.
-- The interim Supabase Storage tile object can be deleted once stage 2 is live.
 
 ## How to run it
 
