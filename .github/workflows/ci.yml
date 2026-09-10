@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install pmtiles CLI (for scripts/fetch-tiles.sh)
+        run: |
+          curl -sSL -o /tmp/pmtiles.tar.gz \
+            https://github.com/protomaps/go-pmtiles/releases/download/v1.31.2/go-pmtiles_1.31.2_Linux_x86_64.tar.gz
+          tar -xzf /tmp/pmtiles.tar.gz -C /tmp pmtiles
+          sudo install /tmp/pmtiles /usr/local/bin/pmtiles
+          pmtiles version
+
+      - name: Compute tile cache key from bbox/maxzoom constants
+        id: tile-key
+        run: |
+          HASH=$(grep -E '^(BBOX|MAXZOOM)=' scripts/fetch-tiles.sh | sha256sum | cut -d' ' -f1)
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+
+      # Keyed on the bbox+maxzoom constants (not the whole script) so an
+      # unrelated script edit doesn't force re-downloading ~131MB from
+      # Protomaps' free daily-build service.
+      - name: Cache London tiles extract
+        id: tiles-cache
+        uses: actions/cache@v4
+        with:
+          path: public/tiles/london.pmtiles
+          key: london-pmtiles-${{ steps.tile-key.outputs.hash }}
+
+      - name: Fetch London tiles (cache miss only)
+        if: steps.tiles-cache.outputs.cache-hit != 'true'
+        run: scripts/fetch-tiles.sh
+
+      - name: Cache Playwright browser binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright browsers (webkit for e2e, chromium for assert-pwa)
+        run: npx playwright install --with-deps webkit chromium
+
+      - name: supabase start (db + edge runtime)
+        run: npx supabase start
+
+      - name: Write .env from local stack (supabase status -o env)
+        run: |
+          API_URL=$(npx supabase status -o env | grep '^API_URL=' | cut -d'=' -f2- | tr -d '"')
+          ANON_KEY=$(npx supabase status -o env | grep '^ANON_KEY=' | cut -d'=' -f2- | tr -d '"')
+          echo "VITE_SUPABASE_URL=$API_URL" > .env
+          echo "VITE_SUPABASE_ANON_KEY=$ANON_KEY" >> .env
+
+      - name: Gate — npx supabase db reset
+        run: npx supabase db reset
+
+      - name: Gate — generated types match src/db/types.ts
+        run: npx supabase gen types typescript --local | diff - src/db/types.ts
+
+      - name: Gate — npm run build
+        run: npm run build
+
+      - name: Gate — npm run test (unit)
+        run: npm run test
+
+      - name: Gate — npm run test:e2e (map-shell, mvp-loop, offline, offline-map, touch-draw)
+        run: npm run test:e2e
+
+      - name: Gate — node scripts/assert-pwa.mjs
+        run: node scripts/assert-pwa.mjs
+
+      - name: supabase stop
+        if: always()
+        run: npx supabase stop
