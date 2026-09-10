@@ -1,0 +1,91 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Fail fast, before installing anything, if the production tiles bucket
+      # hasn't been provisioned yet. VITE_SUPABASE_URL/ANON_KEY/TILES_URL are all
+      # repo *variables*, not secrets — they ship in the client bundle either way
+      # (see CLAUDE.md), so there is nothing to protect by hiding them; the guard
+      # here is about not shipping a build with a silently-broken map.
+      - name: Guard — VITE_TILES_URL must be set
+        run: |
+          if [ -z "${{ vars.VITE_TILES_URL }}" ]; then
+            echo "::error::VITE_TILES_URL repo variable is not set — refusing to deploy a build with a broken tiles source. Set it once the production tiles bucket/R2 URL exists: gh variable set VITE_TILES_URL --body '<url>'"
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Gate — npm run build
+        run: npm run build
+        env:
+          VITE_BASE: /interactive-map/
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          VITE_TILES_URL: ${{ vars.VITE_TILES_URL }}
+
+      # Deliberately NOT `npm run test` (the full unit suite): tests/unit/schema.test.ts
+      # and save-area.test.ts need a running local Supabase stack (`npx supabase start`
+      # + `db reset`), which is heavy to stand up here purely to gate a static deploy.
+      # ci.yml already runs that full suite (plus e2e) on this same push — it is the
+      # authoritative gate. Here we re-run only the dependency-free subset as a cheap
+      # extra sanity check specific to this build.
+      #
+      # Considered instead: an `on: workflow_run` trigger chaining this workflow after
+      # CI succeeds, so a red CI could never be followed by a deploy. Rejected for now —
+      # GitHub only evaluates workflow_run conditions using the workflow YAML that is on
+      # the *default* branch, so it cannot be proven working from a feature branch before
+      # merge (this file isn't on main yet). push + workflow_dispatch is the one that can
+      # be proven today via a workflow_dispatch run. Revisit if a merge-then-broken-CI
+      # race ever actually bites.
+      - name: Gate — npm run test (unit subset with no Supabase dependency)
+        run: npx vitest run tests/unit/areas.test.ts tests/unit/queue.test.ts
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
