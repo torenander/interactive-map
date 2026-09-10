@@ -7,6 +7,14 @@
 //
 // Connection details are read from `supabase status -o env` rather than hardcoded, so this
 // works against whatever ports/keys the local stack actually has.
+//
+// Cell derivation is no longer a Postgres trigger — h3 / h3_postgis do not exist as
+// Postgres extensions anywhere (see supabase/migrations/0002_derive_cells.sql). Creating an
+// area now means invoking the `save-area` edge function (the sole write path — see
+// supabase/functions/save-area/index.ts), which `supabase start` serves locally. The one
+// exception is the rating check: that must be proven directly against the areas table, not
+// through the function, so it is the database constraint being tested and not app-level
+// validation.
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -37,12 +45,43 @@ function readLocalSupabaseEnv(): Record<string, string> {
   return env;
 }
 
+type GeoJsonPolygon = { type: "Polygon"; coordinates: number[][][] };
+
 // Two small polygons far enough apart that they share no H3 res-10 cells:
 // Trafalgar Square area, and Greenwich, a few km east.
-const POLY_TRAFALGAR =
-  "SRID=4326;POLYGON((-0.1280 51.5070, -0.1270 51.5070, -0.1270 51.5080, -0.1280 51.5080, -0.1280 51.5070))";
-const POLY_GREENWICH =
-  "SRID=4326;POLYGON((-0.0100 51.4780, -0.0090 51.4780, -0.0090 51.4790, -0.0100 51.4790, -0.0100 51.4780))";
+const TRAFALGAR: GeoJsonPolygon = {
+  type: "Polygon",
+  coordinates: [
+    [
+      [-0.128, 51.507],
+      [-0.127, 51.507],
+      [-0.127, 51.508],
+      [-0.128, 51.508],
+      [-0.128, 51.507],
+    ],
+  ],
+};
+const GREENWICH: GeoJsonPolygon = {
+  type: "Polygon",
+  coordinates: [
+    [
+      [-0.01, 51.478],
+      [-0.009, 51.478],
+      [-0.009, 51.479],
+      [-0.01, 51.479],
+      [-0.01, 51.478],
+    ],
+  ],
+};
+// WKT form of TRAFALGAR, for the one test that must bypass save-area and write the
+// areas table directly.
+const TRAFALGAR_WKT =
+  "SRID=4326;POLYGON((-0.128 51.507, -0.127 51.507, -0.127 51.508, -0.128 51.508, -0.128 51.507))";
+
+type SaveAreaResult = {
+  area: Database["public"]["Tables"]["areas"]["Row"];
+  cellCount: number;
+};
 
 describe("G2 schema constraints", () => {
   let admin: SupabaseClient<Database>;
@@ -59,6 +98,17 @@ describe("G2 schema constraints", () => {
     const { error } = await client.auth.signInWithPassword({ email, password });
     if (error) throw error;
     return client;
+  }
+
+  async function saveArea(
+    client: SupabaseClient<Database>,
+    input: { id: string; geom: GeoJsonPolygon; rating: number; comment?: string | null },
+  ): Promise<SaveAreaResult> {
+    const { data, error } = await client.functions.invoke<SaveAreaResult>("save-area", {
+      body: input,
+    });
+    if (error) throw error;
+    return data as SaveAreaResult;
   }
 
   beforeAll(async () => {
@@ -107,28 +157,28 @@ describe("G2 schema constraints", () => {
     if (userB) await admin.auth.admin.deleteUser(userB.id);
   });
 
-  it("inserting an area populates area_cells with at least one row", async () => {
-    const { data: area, error } = await clientA
-      .from("areas")
-      .insert({ user_id: userA.id, geom: POLY_TRAFALGAR, rating: 1 })
-      .select()
-      .single();
-    expect(error).toBeNull();
-    expect(area).not.toBeNull();
-    createdAreaIds.push(area!.id);
+  it("inserting an area (via save-area) populates area_cells with at least one row", async () => {
+    const id = randomUUID();
+    createdAreaIds.push(id);
+
+    const result = await saveArea(clientA, { id, geom: TRAFALGAR, rating: 1 });
+    expect(result.area.id).toBe(id);
+    expect(result.cellCount).toBeGreaterThan(0);
 
     const { data: cells, error: cellsError } = await admin
       .from("area_cells")
       .select("h3_index")
-      .eq("area_id", area!.id);
+      .eq("area_id", id);
     expect(cellsError).toBeNull();
     expect(cells!.length).toBeGreaterThan(0);
   });
 
-  it("rating = 3 is rejected", async () => {
+  it("rating = 3 is rejected by the database, not just app validation", async () => {
+    // Deliberately bypasses save-area: a direct table insert, so what rejects this is
+    // the `check (rating between -2 and 2)` constraint in migration 0001.
     const { data, error } = await clientA
       .from("areas")
-      .insert({ user_id: userA.id, geom: POLY_TRAFALGAR, rating: 3 })
+      .insert({ user_id: userA.id, geom: TRAFALGAR_WKT, rating: 3 })
       .select()
       .single();
     expect(data).toBeNull();
@@ -136,76 +186,64 @@ describe("G2 schema constraints", () => {
   });
 
   it("updating geom replaces the cell set rather than appending", async () => {
-    const { data: area, error } = await clientA
-      .from("areas")
-      .insert({ user_id: userA.id, geom: POLY_TRAFALGAR, rating: 0 })
-      .select()
-      .single();
-    expect(error).toBeNull();
-    createdAreaIds.push(area!.id);
+    const id = randomUUID();
+    createdAreaIds.push(id);
+
+    await saveArea(clientA, { id, geom: TRAFALGAR, rating: 0 });
 
     const { data: before } = await admin
       .from("area_cells")
       .select("h3_index")
-      .eq("area_id", area!.id);
+      .eq("area_id", id);
     const beforeIds = new Set((before ?? []).map((c) => c.h3_index));
     expect(beforeIds.size).toBeGreaterThan(0);
 
-    const { error: updateError } = await clientA
-      .from("areas")
-      .update({ geom: POLY_GREENWICH })
-      .eq("id", area!.id);
-    expect(updateError).toBeNull();
+    await saveArea(clientA, { id, geom: GREENWICH, rating: 0 });
 
     const { data: after } = await admin
       .from("area_cells")
       .select("h3_index")
-      .eq("area_id", area!.id);
+      .eq("area_id", id);
     const afterIds = new Set((after ?? []).map((c) => c.h3_index));
     expect(afterIds.size).toBeGreaterThan(0);
 
-    for (const id of beforeIds) {
-      expect(afterIds.has(id)).toBe(false);
+    for (const cellId of beforeIds) {
+      expect(afterIds.has(cellId)).toBe(false);
     }
   });
 
   it("deleting an area cascades to its cells", async () => {
-    const { data: area, error } = await clientA
-      .from("areas")
-      .insert({ user_id: userA.id, geom: POLY_TRAFALGAR, rating: -1 })
-      .select()
-      .single();
-    expect(error).toBeNull();
+    const id = randomUUID();
+
+    await saveArea(clientA, { id, geom: TRAFALGAR, rating: -1 });
 
     const { data: cellsBefore } = await admin
       .from("area_cells")
       .select("h3_index")
-      .eq("area_id", area!.id);
+      .eq("area_id", id);
     expect(cellsBefore!.length).toBeGreaterThan(0);
 
-    const { error: deleteError } = await clientA.from("areas").delete().eq("id", area!.id);
+    // Deletes go direct — cascade (migration 0001) handles the cells, no function needed.
+    const { error: deleteError } = await clientA.from("areas").delete().eq("id", id);
     expect(deleteError).toBeNull();
 
     const { data: cellsAfter } = await admin
       .from("area_cells")
       .select("h3_index")
-      .eq("area_id", area!.id);
+      .eq("area_id", id);
     expect(cellsAfter).toEqual([]);
   });
 
   it("a second user's select on another user's area returns zero rows", async () => {
-    const { data: area, error } = await clientA
-      .from("areas")
-      .insert({ user_id: userA.id, geom: POLY_TRAFALGAR, rating: 1 })
-      .select()
-      .single();
-    expect(error).toBeNull();
-    createdAreaIds.push(area!.id);
+    const id = randomUUID();
+    createdAreaIds.push(id);
+
+    await saveArea(clientA, { id, geom: TRAFALGAR, rating: 1 });
 
     const { data: seenByB, error: selectError } = await clientB
       .from("areas")
       .select("*")
-      .eq("id", area!.id);
+      .eq("id", id);
     expect(selectError).toBeNull();
     expect(seenByB).toEqual([]);
   });
