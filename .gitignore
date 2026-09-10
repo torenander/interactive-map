@@ -17,3 +17,6 @@ build/
 
 # Claude Code — lokala, icke-delade inställningar
 .claude/settings.local.json
+
+# Basemap build artifact — rebuild with scripts/fetch-tiles.sh
+public/tiles/*.pmtiles

@@ -45,7 +45,7 @@ A goal is marked done only when every one of its `done_when` commands in `docs/O
 
 ---
 
-## [ ] Task 1 — London basemap extract
+## [~] Task 1 — London basemap extract
 
 Produces `public/tiles/london.pmtiles`, which G1's `blocked_by` requires. Data task, no application code.
 
@@ -57,17 +57,18 @@ Produces `public/tiles/london.pmtiles`, which G1's `blocked_by` requires. Data t
 **Interfaces:**
 - Produces: a pmtiles archive at `public/tiles/london.pmtiles`, served by Vite at the URL path `/tiles/london.pmtiles`. Task 3 consumes it as `pmtiles:///tiles/london.pmtiles`.
 
-- [ ] **Step 1: Install the pmtiles CLI**
+- [x] **Step 1: Install the pmtiles CLI**
 
 ```bash
-brew install protomaps/tap/pmtiles
+brew install pmtiles
 pmtiles version
 ```
 
-If the tap fails, download the release binary for `darwin_arm64` from
+`pmtiles` is in homebrew-core; there is no `protomaps/tap`. On a machine without
+Homebrew, download the `darwin_arm64` binary from
 `https://github.com/protomaps/go-pmtiles/releases` and put it on `PATH` instead.
 
-- [ ] **Step 2: Write the extract script**
+- [x] **Step 2: Write the extract script**
 
 Protomaps daily planet builds are retained roughly a week, so the date cannot be
 hardcoded. `pmtiles extract` uses HTTP range requests and downloads only the tiles
@@ -110,7 +111,7 @@ EOF
 chmod +x scripts/fetch-tiles.sh
 ```
 
-- [ ] **Step 3: Run it**
+- [x] **Step 3: Run it**
 
 ```bash
 scripts/fetch-tiles.sh
@@ -119,7 +120,7 @@ scripts/fetch-tiles.sh
 Expected: `pmtiles show` reports a non-zero tile count, `min zoom 0`, `max zoom 15`,
 and bounds enclosing the Greater London bbox.
 
-- [ ] **Step 4: Verify the artifact independently of the script**
+- [x] **Step 4: Verify the artifact independently of the script**
 
 ```bash
 pmtiles show public/tiles/london.pmtiles | grep -E 'tile count|bounds|max zoom'
@@ -129,14 +130,14 @@ test -s public/tiles/london.pmtiles && echo "non-empty: OK"
 Expected: all three fields present, file non-empty. If tile count is 0 the bbox
 was wrong — do not proceed to Task 3 with an empty archive.
 
-- [ ] **Step 5: Keep the archive out of git**
+- [x] **Step 5: Keep the archive out of git**
 
 ```bash
 printf '\n# Basemap build artifact — rebuild with scripts/fetch-tiles.sh\npublic/tiles/*.pmtiles\n' >> .gitignore
 git status --short   # london.pmtiles must NOT appear
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/fetch-tiles.sh .gitignore
