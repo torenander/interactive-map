@@ -1,12 +1,19 @@
 import { defineConfig, devices } from '@playwright/test'
 
+// Port 4173 is the committed default — the same port the `preview` npm script
+// and docs/OBJECTIVES.md's done_when commands use verbatim. G5 work happens in
+// a worktree alongside another teammate's concurrent use of 4173 in the main
+// checkout, so its own verification runs with PREVIEW_PORT=4273 instead. The
+// default here is unchanged.
+const PREVIEW_PORT = process.env.PREVIEW_PORT || '4173'
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   use: {
-    baseURL: 'http://localhost:4173',
+    baseURL: `http://localhost:${PREVIEW_PORT}`,
     trace: 'on-first-retry',
     permissions: ['geolocation'],
     geolocation: { latitude: 51.5072, longitude: -0.1276 }, // Charing Cross
@@ -24,8 +31,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run build && npm run preview',
-    url: 'http://localhost:4173',
+    command: `npm run build && npx vite preview --port ${PREVIEW_PORT} --strictPort`,
+    url: `http://localhost:${PREVIEW_PORT}`,
     // Always rebuild. Reusing a running preview server silently served a stale
     // dist and turned a genuinely failing test green.
     reuseExistingServer: false,
