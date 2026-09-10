@@ -50,11 +50,19 @@ need it are flagged; they are authored regardless and verified as soon as Docker
       3.3.7, but **no `h3` or `h3_postgis` control file anywhere in the image**. This is not
       the signature-drift hazard `docs/DATA-MODEL.md` flagged; the extension is not packaged
       in the local dev Postgres image at all, on any Postgres major version this CLI ships.
-      Did not touch migration 0002's function call — there is nothing to fix there until the
-      extension itself exists locally. Did not build a custom Postgres image to add it — that
-      is a real infra decision (which h3-pg build, pinned where, who maintains it) outside
-      "fix the call in 0002" and outside `supabase/**` as scoped to me. Stopping and reporting
-      per `docs/OBJECTIVES.md`: "If a check is wrong, stop and say so."
+      **Re-confirmed after Docker restart**, re-run at team lead's request: `supabase start`
+      fails identically (exit 1, same error), `supabase db reset` then fails with
+      `supabase start is not running` (exit 1) since the stack never comes up. Deterministic,
+      not a transient Docker hiccup. Cross-checked against upstream: `h3` has been an open
+      feature request against `supabase/postgres` since 2022
+      (github.com/supabase/postgres/issues/245, closed in favour of
+      github.com/orgs/supabase/discussions/9687, still unresolved) — it has never shipped in
+      any Supabase Postgres image, local or hosted. Did not touch migration 0002's function
+      call — there is nothing to fix there until the extension itself exists locally. Did not
+      build a custom Postgres image to add it — that is a real infra decision (which h3-pg
+      build, pinned where, who maintains it, whether it survives a `supabase` CLI upgrade)
+      outside "fix the call in 0002" and beyond what I'll improvise unauthorized. Stopping and
+      reporting per `docs/OBJECTIVES.md`: "If a check is wrong, stop and say so."
 - [x] **Step 3:** Commit — `feat: derive area_cells from geometry via trigger`. (Migration
       content unchanged; nothing to fix yet.)
 
@@ -111,15 +119,20 @@ Assertions required by `docs/OBJECTIVES.md` § G2, against a local Supabase inst
 
 ## [ ] Task 9 — Close out G2 — NOT DONE, BLOCKED
 
-- [ ] **Step 1:** Run all three `done_when` commands from `docs/OBJECTIVES.md` § G2 unmodified,
-      record exit codes.
-  - `npx supabase db reset` — RAN, **exit 1** (missing `h3` extension in the local Postgres
-    image, see Task 3).
-  - `npx supabase gen types typescript --local | diff - src/db/types.ts` — NOT RUN (no
-    migrated DB).
-  - `npm run test -- tests/unit/schema.test.ts` — NOT RUN in a meaningful sense (no migrated
-    DB to test against; the file itself runs and fails with a clear setup error, not silently).
+- [x] **Step 1:** Ran all three `done_when` commands from `docs/OBJECTIVES.md` § G2 verbatim,
+      recorded exit codes (re-run a second time at team lead's request, after Docker was
+      confirmed up):
+  - `npx supabase db reset` — RAN, **exit 1**. (`supabase start` fails applying migration
+    0001 on `create extension if not exists h3` — missing extension, see Task 3; `db reset`
+    itself then reports `supabase start is not running`, also exit 1.)
+  - `npx supabase gen types typescript --local | diff - src/db/types.ts` — RAN, **exit 1**.
+    `gen types` itself errors (`supabase start is not running`) since there is no migrated
+    local DB to introspect; the diff is therefore against an error message, not real output.
+  - `npm run test -- tests/unit/schema.test.ts` — RAN, **exit 1**. All 5 assertions skipped;
+    the suite fails in `beforeAll` with a clear, actionable error (`supabase status -o env`
+    finds no running container), not a silent or assertion-free pass.
 - [x] **Step 2:** Reported to team lead. G2 tasks 1, 2 (client), and 8 (test authored) are
       genuinely done; migrations 2–6 are blocked on an environment gap (h3-pg not packaged in
-      the Supabase local dev Postgres image) that is outside "fix the call in 0002." **G2 is
-      NOT marked done** — `docs/OBJECTIVES.md`/`docs/TASKS.md` untouched, as instructed.
+      any Supabase Postgres image — confirmed against upstream, see Task 3) that is outside
+      "fix the call in 0002." **G2 is NOT marked done** —
+      `docs/OBJECTIVES.md`/`docs/TASKS.md` untouched, as instructed.
