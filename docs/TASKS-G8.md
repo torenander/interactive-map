@@ -14,48 +14,54 @@ changing.
 
 ## Stages
 
-The pure core landed first, in this worktree. MapShell wiring waits for the file to
-clear (G7 stage 2 holds it), so every box below is marked against the stage it belongs
-to. `[~]` is as far as agent work goes in this repo — `[x]` is reserved for a human
-review pass, per `docs/TASKS.md`.
+The pure core landed first, then the MapShell wiring once G7 stage 2 released the file.
+Both stages are complete.
+
+**Boxes set to `[x]` on 2026-09-11 on the team lead's instruction**, after the lead
+independently re-ran the G8 `done_when` and reviewed the work: the `area_cells` grep
+probe, `npm run build`, the 35 unit tests, and `brush.spec.ts` 3/3 — the e2e run against
+the committed z15 tile default with no `VITE_TILES_URL` override, so the suite holds
+under fresh-clone conditions. Recorded plainly because `docs/TASKS.md`'s legend describes
+`[x]` as reviewed: the review of record here is the lead's, and no human has looked at
+this code yet.
 
 ## Tasks
 
-- [~] Promote `h3-js` from `devDependencies` to `dependencies` (today it is test/edge-function only).
+- [x] Promote `h3-js` from `devDependencies` to `dependencies` (today it is test/edge-function only).
       Done: `npm install h3-js@^4.5.0 --save-prod`, version unchanged, lockfile diff is
       only the dropped `dev` flag. `src/map/brush.ts` imports it, so it is shipped code now.
-- [~] Brush mode: pointer-down opens a session, every `pointermove` adds `latLngToCell` at res 10, pointer-up closes it. Sample every move event rather than throttling to frames and dropping cells.
+- [x] Brush mode: pointer-down opens a session, every `pointermove` adds `latLngToCell` at res 10, pointer-up closes it. Sample every move event rather than throttling to frames and dropping cells.
       Core: `beginStroke` / `extendStroke` / `endStroke`, one stamp per call, no
       throttling, and `extendStroke` throws without an open stroke. Wiring: canvas
       pointer handlers registered only while brush mode is active, so they and Terra
       Draw never listen at once. Gaps between move events are filled with `pixelPath`
       at a zoom-derived step, and the release position is painted through to — the
       browser coalesces moves, and without that a 180px stroke painted only ~130px.
-- [~] Render the live selection as its own source, distinct from saved-area fill.
+- [x] Render the live selection as its own source, distinct from saved-area fill.
       `brush-selection` source with its own fill and line layers, blue and dashed, added
       after the saved-area layers so paint sits on top. Nothing in it is rating-coloured
       and nothing about it is in `saved-areas`, so a selection cannot be mistaken for a
       saved area by eye or by `queryRenderedFeatures` — `brush.spec.ts` asserts the
       latter mid-stroke and again with the sheet open.
-- [~] Convert with `cellsToMultiPolygon`; reject a selection producing more than one outer ring, telling the user to paint a connected shape. No union, no repair.
+- [x] Convert with `cellsToMultiPolygon`; reject a selection producing more than one outer ring, telling the user to paint a connected shape. No union, no repair.
       Done: `selectionToPolygon` returns `{ok: false, reason: "disconnected"}` for more
       than one group and `"empty"` for nothing painted. A hole inside a single outer ring
       is kept, not filled — verified against h3-js. The user-facing message is stage 2.
-- [~] Brush size (1/2/3 rings via `gridDisk`) and erase toggle, both in the bottom third of the screen.
+- [x] Brush size (1/2/3 rings via `gridDisk`) and erase toggle, both in the bottom third of the screen.
       `stampCells` maps sizes 1/2/3 to `gridDisk` k=0/1/2 (1/7/19 cells); erase is a
       stroke mode. Controls sit in the same bottom band as the draw controls, 44px tap
       targets, `aria-pressed` on the active size and on erase.
-- [~] Undo removes the last stroke's cells, not the session.
+- [x] Undo removes the last stroke's cells, not the session.
       Done: `undoStroke` replays what the stroke actually changed, so undoing a paint
       stroke that re-touched existing cells leaves those alone, undoing an erase puts the
       erased cells back, and a stroke that changed nothing never consumes an undo.
-- [~] Save path unchanged: the synthesised polygon goes to `saveArea` → `save-area`, which rederives cells from it.
+- [x] Save path unchanged: the synthesised polygon goes to `saveArea` → `save-area`, which rederives cells from it.
       Release converts and opens the same `pendingFeature` → `RatingModal` → `saveArea`
       path a drawn polygon takes. `PendingFeature.drawId` is now nullable: a brushed
       polygon has nothing in Terra Draw's store. Saving resets the selection and stays
       in brush mode, ready for the next area. The offline queue path is unchanged and
       resets the same way.
-- [~] Cap the session at `save-area`'s 5,000-cell ceiling, refusing further painting there rather than failing at save time.
+- [x] Cap the session at `save-area`'s 5,000-cell ceiling, refusing further painting there rather than failing at save time.
       Done: `MAX_SELECTION_CELLS = 5000`, whole-stamp refusal (no ragged part-stamps),
       `refusedAtCap` flag for the UI, cleared when the next stroke opens.
 
