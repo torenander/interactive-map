@@ -65,6 +65,27 @@ initialises: `draw-precision.spec.ts` 3 passed, `touch-draw.spec.ts` 1 passed,
 | MapLibre worker fetches | 2 (or 1, late) | **1**, starting at 42 ms vs entry end 46 ms |
 | First tile range request | 1,820 ms (deployed, throttled) | 129 ms (local preview) |
 
+## Fix — 2026-09-11: perf-load's timing assertion replaced
+
+`perf-load.spec.ts` asserted `workerStart <= entryEnd`. Written against the deployed
+profile — entry finishing at 963 ms, the worker running 1082-1329 ms — it was measuring a
+gap of hundreds of milliseconds. On localhost both resources come from the service worker
+precache and land within a few milliseconds of each other, so the comparison read
+scheduling noise, and it failed at **11 ms against 10 ms** at `workers=1` with the machine
+lock held. That is not contention; a one-millisecond inversion between two cache hits says
+nothing about whether the fetch was serialized.
+
+It now asserts the mechanism the fix actually guarantees: the document started the fetch
+(`window.__mapWorkerSource`, parked by the inline head script) and MapShell reused it
+rather than issuing its own (exactly one worker resource entry). Mutation tested both ways,
+as the terra-draw marker was: neutering the plugin's injection fails it with "the document
+did not start the worker fetch"; the current build passes five consecutive runs.
+
+This test was the repeat offender behind the flakiness investigated as task #22, which
+closed as "cause unconfirmed". That conclusion is amended: one of the three had a findable
+cause, and it was in the assertion rather than in the machine. The search looked for a
+machine-level explanation and did not read the assertion itself.
+
 ## Two gate corrections made along the way
 
 Both strengthened the gates; neither moved a threshold.

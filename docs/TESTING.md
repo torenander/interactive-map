@@ -62,10 +62,17 @@ perf-load) and was reported as suite flakiness. It is not. Eleven full-suite run
 | Induced contention (CPU load, or a build fired mid-run) | 5 | 2 runs failed, 3 clean |
 
 Every contention-induced failure hit a **different** test — mvp-loop's `beforeAll` when the
-preview server was killed, touch-draw's `locator.tap` on a 30 s timeout — and never the
-original three. So there are no three flaky tests to fix; there is one machine that
-produces non-deterministic failures wherever the timing happens to land when two things
-run at once. The fix is the lock, not the tests, and no assertion or threshold was changed.
+preview server was killed, touch-draw's `locator.tap` on a 30 s timeout. So contention
+produces non-deterministic failures wherever the timing happens to land when two things run
+at once, and the fix for those is the lock rather than the tests.
+
+**Amended 2026-09-11:** that conclusion was right about the machine and wrong to stop
+there. One of the three original failures, `perf-load`, had a findable cause of its own —
+its `workerStart <= entryEnd` check compared two service-worker cache hits milliseconds
+apart and failed at 11 ms against 10 ms even at `workers=1` under the lock. It is now a
+structural assertion (see `docs/TASKS-G7.md`). The lesson worth keeping: "fails in a suite,
+passes in isolation" looks like contention, and a test whose assertion is itself a race
+produces exactly the same signature. Rule out the assertion before blaming the machine.
 
 Why contention was possible at all despite both agents "holding the lock": one of the two
 acquisition loops had the guard bug below and had silently lost the lock it believed it
@@ -85,6 +92,31 @@ An unconditional `rmdir` on release is the same defect wearing different clothes
 stays harmless only for as long as acquisition is correct. Both halves are guarded here;
 do not reintroduce either by inlining "just three lines" into a new script.
 
+### Testing at your own commit in a shared worktree
+
+Several agents share one worktree, so `src/` often carries somebody else's uncommitted
+work. That makes "does my test fail before the feature exists?" unanswerable in place — a
+red-first spec will pass on its first run because the implementation is already sitting
+there, unstaged.
+
+Do not stash or revert their files. Commit your own work, then check out a throwaway
+worktree at your commit, where their uncommitted changes do not exist:
+
+```bash
+git worktree add -f ../g11-red HEAD
+cp .env ../g11-red/.env                                   # gitignored, needed to boot
+ln -sfn "$PWD/public/tiles/london.pmtiles" ../g11-red/public/tiles/london.pmtiles
+( cd ../g11-red && PREVIEW_PORT=4673 npx playwright test --project=desktop <spec> )
+git worktree remove --force ../g11-red
+```
+
+It must live under the repo root's tree so Node still resolves `node_modules` by walking
+up. Two things that hid reds the first time: the tiles archive and `.env` are both
+gitignored, so without them the app never boots and every test fails for the wrong reason;
+and `test.describe.configure({ mode: 'serial' })` skips the remaining tests after the
+first failure, showing one red where there were six. Switch the throwaway copy to
+sequential and non-serial so every assertion fails on its own merits.
+
 ### What this constrains in CI
 
 The lock is not a courtesy about CPU. `dist/` is shared mutable state, and the e2e suite
@@ -98,6 +130,23 @@ is ever attempted, it will present as flaky tests — a different test failing e
 never reproducible in isolation — rather than as a build collision, and cost somebody an
 afternoon chasing the tests instead of the runner. Give each concurrent job its own
 checkout, or serialize them.
+
+### Desktop runs one worker at a time
+
+The desktop project runs with `--workers=1`, and `docs/OBJECTIVES.md` § G11 carries the
+flag in its `done_when` line for that reason. Measured on this machine: at 5 workers a full
+desktop run went 32/32 then failed 3; at 2 workers, 32/32 then 2 then 2; at 1 worker, five
+consecutive runs with every test clean except the `perf-load` assertion bug fixed
+separately above. Mobile at the same 5 workers was 6/6 clean, so this is about weight —
+Chromium at 1440x900 costs far more per worker than WebKit at 390x844 — not about the
+tests.
+
+The cost is 174-192 s against roughly 100 s. A deterministic three-minute gate is worth
+more than a ninety-second coin flip; a gate that fails intermittently on merit teaches
+people to re-run it, which is how a real failure gets waved through.
+
+The same applies when the desktop lane reaches `ci.yml`: it needs its own step with the
+flag, not a second project bolted onto the existing `npm run test:e2e` invocation.
 
 ## Commands
 
