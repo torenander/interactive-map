@@ -1,4 +1,4 @@
-# G7 — Load performance — task breakdown
+# G7 — Load performance — done 2026-09-11
 
 **Goal:** First map paint is not gated on work the map does not need — per-range tile
 caching, Terra Draw and the Supabase client loaded after the map exists, and the MapLibre
@@ -30,37 +30,61 @@ at the same time. Stage 2 starts once G6's MapShell work is committed.
 
 ### Stage 2 — all MapShell edits, after G6 commits
 
-- [ ] `await import()` Terra Draw inside `map.on('load')` (`src/map/MapShell.tsx:14-15`)
-- [ ] `await import()` the Supabase client off the pre-map path — three MapShell
-      touchpoints: `:13` (`FunctionsFetchError`), `:19` (`db/client`), plus `App.tsx`,
-      `auth/SignIn.tsx` and `auth/useSession.ts`
-- [ ] Wire MapShell to the preloaded worker URL, keeping the guarantee that the map is
-      never created against an unresolved worker URL (`MapShell.tsx:41-51`)
-- [ ] Run all five `done_when` commands; record outputs
+- [x] `await import()` Terra Draw inside `map.on('load')`
+- [x] `await import()` the Supabase client off the pre-map path — `db/client.ts` creates
+      the client lazily; `FunctionsFetchError` is replaced by a local `OfflineWriteError`
+      so the queue-vs-fail distinction no longer needs the vendor module
+- [x] Start the worker fetch from the document head and have MapShell await it, keeping
+      the guarantee that the map is never created against an unresolved worker URL
+- [x] Run all five `done_when` commands; record outputs
 
 ---
 
-# Stage 1 results (measured, real `playwright.config.ts`)
+# Final results — every `done_when` command exit 0
 
-| Gate | Result | Exit |
+Run against the real `playwright.config.ts` on 2026-09-11, after G6 closed.
+
+| Command | Result |
+|---|---|
+| `npm run build` | exit 0 |
+| `node scripts/assert-bundle-budget.mjs` | **364,234 B gzip**, budget 380,000 — PASS |
+| `npm run test:e2e -- tests/e2e/perf-load.spec.ts` | 1 passed (7.2 s) |
+| `npm run test:e2e -- tests/e2e/offline-map.spec.ts` | 1 passed (2.1 s) |
+| `npm run test:e2e -- tests/e2e/offline.spec.ts` | 1 passed (3.4 s) |
+
+G6's suites re-run as regression gates, since deferring Terra Draw moves when drawing
+initialises: `draw-precision.spec.ts` 3 passed, `touch-draw.spec.ts` 1 passed,
+`mvp-loop.spec.ts` 1 passed. `npm run test` 28 passed.
+
+## What moved
+
+| | Before | After |
 |---|---|---|
-| `node scripts/assert-bundle-budget.mjs` | 449,088 B gzip, both markers present | **1 — expected red** |
-| `perf-load.spec.ts` | cache assertion green; worker fetched twice | **1 — expected red** |
-| `offline-map.spec.ts` | passes (1.3 s) | 0 |
-| `offline.spec.ts` | passes (3.2 s) | 0 |
+| Critical-path JS | 449,088 B gzip | **364,234 B** |
+| Tile bytes cached to paint one viewport | 55,891,073 B | **544,046 B** (5 entries) |
+| MapLibre worker fetches | 2 (or 1, late) | **1**, starting at 42 ms vs entry end 46 ms |
+| First tile range request | 1,820 ms (deployed, throttled) | 129 ms (local preview) |
 
-Both reds are stage 2 work, recorded rather than designed around: the thresholds are
-untouched. The budget is red because Terra Draw and Supabase are still statically
-imported by `MapShell.tsx`; `perf-load` is red because the injected preload is not yet
-reused by MapShell's `fetch()` (two worker resource entries, 50 ms and 84 ms).
+## Two gate corrections made along the way
 
-The tile-caching half of `perf-load` is green: **pmtiles-v1 holds 544,046 B across 5
-entries after painting one viewport, against 55,891,073 B before** — the same paint for
-1/103rd of the bytes, and nothing thrown away when a visit ends early.
+Both strengthened the gates; neither moved a threshold.
 
-The budget baseline moved from 440,217 B to 449,088 B during stage 1 because G6 added
-snapping and `TerraDrawSelectMode` to the same critical-path chunk. The 380,000 B target
-is unchanged and still reachable — it assumes both dependencies leave the critical path.
+1. `perf-load`'s original assertion counted `.pmtiles` requests without a `Range` header.
+   It passed against the unfixed code: WebKit — the only Playwright project here — does
+   not surface service-worker-originated requests to `page.on('request')`. Replaced with
+   a cached-byte count, which failed honestly at 55,891,073 B.
+2. The bundle budget's `TerraDraw` marker tested for a name any caller can write, and
+   destructuring the dynamic import left those names in the entry chunk. Replaced with an
+   internal error string. Verified against a build with terra-draw forced back onto the
+   critical path: exit 1, 407,759 B.
+
+## Still open, deliberately
+
+`docs/TASKS.md` still files G7 under "G6–G10 — planned, not started". That section covers
+four goals owned by three teammates, so rolling up its status is a single shared edit for
+the lead rather than something to race here.
+
+# Stage 1 baselines (measured, superseded by the table above)
 
 # Measured baselines (pre-G7, local preview build)
 
