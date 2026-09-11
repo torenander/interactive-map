@@ -833,6 +833,73 @@ dragging a saved area's vertex impossible.
 
 ---
 
+# G7 — Load performance — done 2026-09-11
+
+Task breakdown: `docs/TASKS-G7.md` (teammate perf-probe, built in two stages so that G6
+and G7 were never editing `src/map/MapShell.tsx` at once).
+
+All five `done_when` commands exit 0, re-run independently by the lead after the
+teammate's own run: `npm run build`, `node scripts/assert-bundle-budget.mjs` (PASS at
+364,240 B gzip against a 380,000 B budget), and the `perf-load`, `offline-map` and
+`offline` suites. G6's three suites were re-run as regression gates, since deferring
+Terra Draw moves when drawing initialises: `draw-precision` 3/3, `touch-draw` 1/1,
+`mvp-loop` 1/1.
+
+What moved: critical-path JS 449,088 -> 364,240 B gzip; tile bytes cached to paint one
+viewport 55,891,073 -> 544,046 B across 5 entries; the MapLibre worker fetched once,
+starting ahead of the entry chunk rather than after it.
+
+Mechanism: `src/sw.ts` caches each pmtiles byte range under its own key instead of
+downloading the whole archive in the background. The old design cost more than it
+returned — over 10 Mbps the full fetch did not finish within 90 s, and since `cache.put`
+only runs once the whole body has arrived, a visit that ended first cached nothing and
+the next one restarted from zero, all while competing for the ranges the map was actually
+waiting on. Whole-archive prefetch survives as an opt-in `prefetch-tiles` message. The
+G5 offline guarantee is unchanged in substance: whatever has been viewed online stays
+viewable offline, which is what `offline-map.spec.ts` exercises.
+
+Terra Draw and `@supabase/supabase-js` now load after the map exists. The Supabase move
+needed one design change rather than a moved import: `saveArea` translates
+`FunctionsFetchError` into a local `OfflineWriteError`, so MapShell's queue-vs-fail
+decision no longer drags the vendor module back onto the critical path.
+
+The MapLibre worker is fetched by an inline script in the document head, with the promise
+awaited by `src/map/MapShell.tsx`. A `<link rel="preload">` cannot do this job: MapShell
+does not load the worker as a resource, it fetches the source and hands MapLibre a blob
+URL so the service worker can serve it offline (WebKit does not intercept worker script
+loads), and no `as`/`crossorigin` combination got WebKit to reuse the preloaded entry —
+it downloaded the worker twice. The load-bearing guarantee is intact: the map is still
+never created against an unresolved worker URL.
+
+**Two gate corrections made during the work**, both strengthening a check, neither moving
+a threshold. `perf-load`'s first version counted `.pmtiles` requests lacking a `Range`
+header and passed against the unfixed code — WebKit does not surface service-worker
+originated requests to `page.on('request')`. It was replaced by a cached-byte count,
+which failed honestly at 55,891,073 B. The bundle budget's `TerraDraw` marker tested for
+a name any caller can write, and destructuring the dynamic import left those names in the
+entry chunk; it now tests a library-internal error string, verified by forcing terra-draw
+back onto the critical path (exit 1, 407,759 B).
+
+---
+
+# G8 — Brush painting of H3 cells — done 2026-09-11
+
+Task breakdown: `docs/TASKS-G8.md` (core first, MapShell wiring once G7 stage 2 released
+the file; that file does not record its teammate name).
+
+All four `done_when` entries exit 0, re-run independently by the lead after the
+teammate's own run: the `area_cells` grep probe, `npm run build`, 35 unit tests, and
+`brush.spec.ts` 3/3 — the e2e run against the committed z15 tile default with no
+`VITE_TILES_URL` override, so the suite holds under fresh-clone conditions.
+
+Design notes are in `docs/TASKS-G8.md`; the two worth surfacing here are that the brush
+samples every `pointermove` rather than throttling to frames (the browser coalesces
+moves, and a 180 px stroke otherwise painted only ~130 px, with gaps filled by a
+zoom-derived step), and that the client still never writes `area_cells` — the grep probe
+holds that invariant, and the brush derives cells for display only.
+
+---
+
 # G9 — Point and line features — done 2026-09-11
 
 Task breakdown: `docs/TASKS-G9.md` (teammate draw-accuracy, backend and UI stages).
@@ -865,12 +932,9 @@ queued with nothing in the database, then flushed on reconnect and surviving a r
 
 ---
 
-# G7, G8, G10 — task breakdowns
+# G10 — task breakdown
 
-Goal blocks: `docs/OBJECTIVES.md`. Task breakdowns live in their own files, per the
-G2–G5 convention. G7 and G8 are complete (see their own files for measured results); no
-entry has been written for them here yet.
+Goal block: `docs/OBJECTIVES.md` § G10. Task breakdown lives in its own file, per the
+G2–G5 convention.
 
-- `docs/TASKS-G7.md` — Load performance (blocked by G5)
-- `docs/TASKS-G8.md` — Brush painting of H3 cells (blocked by G3, G6)
 - `docs/TASKS-G10.md` — Open data overlays (blocked by G5, G9)
