@@ -13,6 +13,21 @@ import { Protocol } from 'pmtiles'
 import type { SnapToCustom, TerraDraw } from 'terra-draw'
 import { buildStyle, LONDON_CENTER, LONDON_ZOOM } from './style'
 import { nearestVertexWithin } from './snapping'
+import {
+  MAX_SELECTION_CELLS,
+  beginStroke,
+  emptySelection,
+  endStroke,
+  extendStroke,
+  pixelPath,
+  pixelStepFor,
+  selectionToPolygon,
+  selectionToRenderGeometry,
+  undoStroke,
+  type BrushMode,
+  type BrushSelection,
+  type BrushSize,
+} from './brush'
 import { fillColorExpression } from '../areas/color'
 import RatingModal from '../areas/RatingModal'
 import { deleteArea, fetchAreas, OfflineWriteError, saveArea, type AreaFeature } from '../db/client'
@@ -69,6 +84,15 @@ const SAVED_AREAS_SOURCE = 'saved-areas'
 const SAVED_AREAS_FILL_LAYER = 'saved-areas-fill'
 const SAVED_AREAS_LINE_LAYER = 'saved-areas-line'
 
+// The brush's in-progress paint gets its own source and its own colours, deliberately
+// not the rating palette: a selection that has not been rated or saved must never read
+// as a saved area (G8's done_when asserts exactly that). Added after the saved-area
+// layers, so paint sits on top of what is already on the map.
+const BRUSH_SOURCE = 'brush-selection'
+const BRUSH_FILL_LAYER = 'brush-selection-fill'
+const BRUSH_LINE_LAYER = 'brush-selection-line'
+
+
 // Terra Draw's own name for the select mode, and the mode name carried in the
 // `properties.mode` of every feature we hand it.
 const SELECT_MODE = 'select'
@@ -96,8 +120,12 @@ const CANCEL_KEY = 'Escape'
 
 type Polygon = { type: 'Polygon'; coordinates: number[][][] }
 
+// A polygon waiting for its rating. `drawId` is the feature's id in Terra Draw's store
+// for a drawn polygon, and `null` for a brushed one — the brush never puts anything in
+// that store, it synthesises the polygon from painted cells instead. Everything
+// downstream (the rating sheet, saveArea, the offline queue) treats the two identically.
 type PendingFeature = {
-  drawId: string
+  drawId: string | null
   geometry: Polygon
 }
 
@@ -189,6 +217,25 @@ export default function MapShell() {
 
   const [mapReady, setMapReady] = useState(false)
   const [isDrawing, setIsDrawing] = useState(false)
+
+  // Brush mode. `brushSelectionRef` is the working copy the pointer handlers read and
+  // write: pointermove fires far faster than React re-renders, and a handler reading
+  // state would keep stamping onto a selection one or more events stale. State exists to
+  // drive rendering, and every change goes through `applySelection` so the two agree.
+  const [brushing, setBrushing] = useState(false)
+  const [brushSelection, setBrushSelection] = useState<BrushSelection>(emptySelection)
+  const brushSelectionRef = useRef<BrushSelection>(brushSelection)
+  const [brushSize, setBrushSize] = useState<BrushSize>(2)
+  const brushSizeRef = useRef<BrushSize>(brushSize)
+  brushSizeRef.current = brushSize
+  const [brushMode, setBrushMode] = useState<BrushMode>('paint')
+  const brushModeRef = useRef<BrushMode>(brushMode)
+  brushModeRef.current = brushMode
+  const [brushNotice, setBrushNotice] = useState<string | null>(null)
+  // Read by the saved-area click handler, which is registered once on load.
+  const brushingRef = useRef(false)
+  brushingRef.current = brushing
+
   const [areas, setAreas] = useState<AreaFeature[]>([])
   const areasRef = useRef<AreaFeature[]>([])
   areasRef.current = areas
@@ -214,6 +261,17 @@ export default function MapShell() {
   const refreshSource = useCallback((next: RenderFeature[]) => {
     const source = map.current?.getSource(SAVED_AREAS_SOURCE) as GeoJSONSource | undefined
     source?.setData(toFeatureCollection(next))
+  }, [])
+
+  // The one way the brush selection changes: ref first (so the next pointer event builds
+  // on it), then state for the render.
+  const applySelection = useCallback((next: BrushSelection) => {
+    brushSelectionRef.current = next
+    setBrushSelection(next)
+    // Exposed for end-to-end tests, for the same reason `__map` and `__draw` are: the
+    // rendered fill proves *something* is painted, but only the cell ids show that a
+    // stroke covered what it was meant to, or that an erase took exactly those cells.
+    ;(window as unknown as { __brushCells?: string[] }).__brushCells = [...next.cells]
   }, [])
 
   // Create map + terra draw once.
@@ -292,6 +350,27 @@ export default function MapShell() {
           'line-color': fillColorExpression(),
           'line-width': 2,
         },
+      })
+
+      // In-progress paint: one MultiPolygon of the painted cells' outlines, in blue with
+      // a dashed edge. Nothing here is rating-coloured and nothing here is in the
+      // saved-areas source, so a selection cannot be mistaken for a saved area by eye or
+      // by queryRenderedFeatures.
+      instance.addSource(BRUSH_SOURCE, {
+        type: 'geojson',
+        data: { type: 'Feature', geometry: { type: 'MultiPolygon', coordinates: [] }, properties: {} },
+      })
+      instance.addLayer({
+        id: BRUSH_FILL_LAYER,
+        type: 'fill',
+        source: BRUSH_SOURCE,
+        paint: { 'fill-color': '#2563eb', 'fill-opacity': 0.4 },
+      })
+      instance.addLayer({
+        id: BRUSH_LINE_LAYER,
+        type: 'line',
+        source: BRUSH_SOURCE,
+        paint: { 'line-color': '#1d4ed8', 'line-width': 2, 'line-dasharray': [2, 1] },
       })
 
       // Snap a vertex being placed or dragged onto the nearest vertex of an already-saved
@@ -382,6 +461,14 @@ export default function MapShell() {
       })
 
       const handleAreaClick = (e: MapLayerMouseEvent) => {
+        // Precedence, decided once and recorded in docs/TASKS-G8.md: while brush mode is
+        // active the pointer belongs to the brush, and nothing else. A stroke that
+        // crosses a saved area paints over it; it does not also open an edit session on
+        // it, which is what this early return prevents (the click MapLibre fires after
+        // pointerup would otherwise arrive here). The converse is enforced at the
+        // entry points: brush mode cannot be started while a draw or edit session is
+        // open, and exiting brush mode hands taps back to this handler.
+        if (brushingRef.current) return
         const feature = e.features?.[0]
         if (!feature) return
         const id = feature.properties?.id as string | undefined
@@ -492,6 +579,131 @@ export default function MapShell() {
     refreshSource(editingId ? combined.filter((f) => f.properties.id !== editingId) : combined)
   }, [mapReady, areas, queuedAreas, editingArea, refreshSource])
 
+  // Paint the current selection. Driven by state rather than written from the pointer
+  // handlers so what is on screen is always what React last rendered from.
+  useEffect(() => {
+    if (!mapReady) return
+    const source = map.current?.getSource(BRUSH_SOURCE) as GeoJSONSource | undefined
+    source?.setData({
+      type: 'Feature',
+      geometry: selectionToRenderGeometry(brushSelection),
+      properties: {},
+    })
+  }, [mapReady, brushSelection])
+
+  // Pointer handling for the brush. Registered only while brush mode is active, so
+  // nothing here can interfere with Terra Draw's own pointer handling the rest of the
+  // time — the two never listen at once.
+  useEffect(() => {
+    if (!mapReady || !brushing) return
+    const instance = map.current
+    if (!instance) return
+    const canvas = instance.getCanvas()
+
+    // One-finger drag has to paint rather than pan. `dragPan.disable()` alone is not
+    // enough: Terra Draw's MapLibre adapter restores map draggability behind our back
+    // (measured — dragPan was back to enabled a few taps after entering brush mode, and
+    // the map then panned with the finger, so a stroke painted a third of the ground it
+    // should have). So the gesture is also stopped at the source: MapLibre binds its
+    // drag listeners to the canvas *container*, one level up from the canvas these
+    // handlers sit on, and stopping propagation there means the map never sees a brush
+    // stroke at all. Pinch zoom still works — it is a two-finger gesture on the
+    // container, untouched by this.
+    instance.dragPan.disable()
+
+    let painting = false
+    let last: { x: number; y: number } | null = null
+
+    const positionIn = (event: PointerEvent) => {
+      const rect = canvas.getBoundingClientRect()
+      return { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    }
+
+    const stampAt = (point: { x: number; y: number }) => {
+      const { lat, lng } = instance.unproject([point.x, point.y])
+      applySelection(extendStroke(brushSelectionRef.current, lat, lng, brushSizeRef.current))
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return // right/middle click is not a brush stroke
+      event.stopPropagation()
+      event.preventDefault()
+      painting = true
+      setBrushNotice(null)
+      canvas.setPointerCapture?.(event.pointerId)
+      applySelection(beginStroke(brushSelectionRef.current, brushModeRef.current))
+      last = positionIn(event)
+      stampAt(last)
+    }
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (!painting) return
+      event.stopPropagation()
+      const point = positionIn(event)
+      // Every move event is sampled — no rAF throttling, which would drop cells the
+      // finger genuinely crossed — and the gap since the previous one is filled in at a
+      // step sized for the current zoom. The step has to come from the zoom: at z11,
+      // where the app opens, a cell is about five pixels across, and a fixed 20px step
+      // left a continuous drag in disconnected pieces (reproduced in brush.spec.ts
+      // before this was zoom-aware).
+      const step = pixelStepFor(instance.getZoom(), instance.getCenter().lat)
+      for (const at of pixelPath(last ?? point, point, step)) stampAt(at)
+      last = point
+    }
+
+    const onPointerUp = (event: PointerEvent) => {
+      if (!painting) return
+      event.stopPropagation()
+      painting = false
+
+      // Paint through to where the pointer actually lifted. The browser coalesces
+      // pointermove events, and the last one it delivers can be well short of the
+      // release point — measured mid-drag in brush.spec.ts, a 180px stroke painted only
+      // its first ~130px, so a stroke that visibly joined two blobs came out
+      // disconnected. Filling the tail here makes the stroke end where the finger did.
+      const releasedAt = positionIn(event)
+      const step = pixelStepFor(instance.getZoom(), instance.getCenter().lat)
+      for (const at of pixelPath(last ?? releasedAt, releasedAt, step)) stampAt(at)
+      last = null
+
+      const closed = endStroke(brushSelectionRef.current)
+      applySelection(closed)
+
+      // Release is where the selection becomes a polygon and the rating sheet opens, the
+      // same sheet a drawn polygon gets. A selection that cannot be one polygon does not
+      // open it: the paint stays on screen with a message saying what to fix, so nothing
+      // the user painted is thrown away.
+      const result = selectionToPolygon(closed)
+      if (!result.ok) {
+        setPendingFeature(null)
+        setModalVisible(false)
+        setBrushNotice(
+          result.reason === 'disconnected'
+            ? 'This paint is in separate pieces — join them up, or undo the stroke that jumped'
+            : null,
+        )
+        return
+      }
+      setPendingFeature({ drawId: null, geometry: result.polygon })
+      setModalVisible(true)
+    }
+
+    canvas.addEventListener('pointerdown', onPointerDown)
+    canvas.addEventListener('pointermove', onPointerMove)
+    canvas.addEventListener('pointerup', onPointerUp)
+    // A cancelled pointer (system gesture, finger off the edge) closes the stroke
+    // exactly as a release does; the cells already painted are kept either way.
+    canvas.addEventListener('pointercancel', onPointerUp)
+
+    return () => {
+      canvas.removeEventListener('pointerdown', onPointerDown)
+      canvas.removeEventListener('pointermove', onPointerMove)
+      canvas.removeEventListener('pointerup', onPointerUp)
+      canvas.removeEventListener('pointercancel', onPointerUp)
+      instance.dragPan.enable()
+    }
+  }, [mapReady, brushing, applySelection])
+
   const runFlush = useCallback(async () => {
     if (!session || flushingRef.current) return
     flushingRef.current = true
@@ -539,6 +751,50 @@ export default function MapShell() {
     draw.current?.undo()
   }
 
+  // Brush mode needs no Terra Draw — it never puts a feature in that store — so unlike
+  // handleStartDrawing it does not wait on the import. It does stand Terra Draw down, so
+  // a half-finished polygon cannot keep taking taps underneath the brush.
+  function handleStartBrush() {
+    if (pendingFeature || editingArea) return
+    draw.current?.setMode(STATIC_MODE)
+    setIsDrawing(false)
+    setBrushNotice(null)
+    setBrushing(true)
+  }
+
+  function resetBrush() {
+    applySelection(emptySelection())
+    setBrushNotice(null)
+  }
+
+  // Leaving brush mode throws the unsaved selection away, which is why the button says
+  // so. Anything worth keeping has already been through the rating sheet.
+  function handleExitBrush() {
+    setBrushing(false)
+    resetBrush()
+    if (!editingArea) {
+      setPendingFeature(null)
+      setModalVisible(false)
+    }
+  }
+
+  // Undo one stroke, not the session (G8). The polygon and the sheet follow the
+  // selection: undoing back to nothing closes the sheet rather than leaving it offering
+  // to save a shape that is no longer painted.
+  function handleUndoStroke() {
+    const next = undoStroke(brushSelectionRef.current)
+    applySelection(next)
+    setBrushNotice(null)
+
+    const result = selectionToPolygon(next)
+    if (result.ok) {
+      setPendingFeature({ drawId: null, geometry: result.polygon })
+      return
+    }
+    setPendingFeature(null)
+    setModalVisible(false)
+  }
+
   // Terra Draw exposes no public finish(); the mode's configured finish key is the
   // supported way in. The adapter listens for keyup on the map canvas, so dispatch it
   // there — this works regardless of what currently holds focus, which a real key press
@@ -550,7 +806,9 @@ export default function MapShell() {
   }
 
   // Take the feature out of Terra Draw's store and stand the map down to static.
-  function clearDrawSession(drawId: string | undefined) {
+  // `drawId` is null for a brushed polygon: there is nothing in Terra Draw's store to
+  // take out, but the mode still stands down.
+  function clearDrawSession(drawId: string | null | undefined) {
     if (drawId) draw.current?.removeFeatures([drawId])
     draw.current?.setMode(STATIC_MODE)
   }
@@ -598,6 +856,10 @@ export default function MapShell() {
       const result = await saveArea(input)
       if (target.kind === 'create') {
         clearDrawSession(pendingFeature!.drawId)
+        // The saved area now renders from `areas`; the selection it came from has served
+        // its purpose. Brush mode stays on with an empty selection, ready for the next
+        // area — one area per painting session (G8), not one area per visit to the mode.
+        resetBrush()
         setAreas((prev) => [
           ...prev,
           {
@@ -646,6 +908,7 @@ export default function MapShell() {
         setQueuedAreas((prev) => [...prev.filter((q) => q.id !== entry.id), entry])
         if (target.kind === 'create') {
           clearDrawSession(pendingFeature!.drawId)
+          resetBrush()
           setPendingFeature(null)
         } else {
           clearDrawSession(editingArea!.drawId)
@@ -773,6 +1036,71 @@ export default function MapShell() {
           </button>
         )}
 
+        {/* Sits with the brush controls rather than in the top band: it is about the
+            stroke that just happened, and the rating sheet covers the top of the screen.
+            The cap message wins over the disconnected one — at the cap, painting the gap
+            closed is not available, so that is the more useful thing to say. */}
+        {brushing && (brushSelection.refusedAtCap || brushNotice) && (
+          <div
+            data-testid="brush-message"
+            className="rounded-lg bg-amber-50 px-3 py-2 text-center text-xs text-amber-800 shadow"
+          >
+            {brushSelection.refusedAtCap
+              ? `That is ${MAX_SELECTION_CELLS.toLocaleString()} cells — the most one area can hold. Erase some, or save this and start another.`
+              : brushNotice}
+          </div>
+        )}
+
+        {brushing && (
+          <div className="flex flex-col items-center gap-2">
+            <div className="flex items-center gap-2">
+              {([1, 2, 3] as BrushSize[]).map((size) => (
+                <button
+                  key={size}
+                  type="button"
+                  data-testid={`brush-size-${size}`}
+                  aria-pressed={brushSize === size}
+                  onClick={() => setBrushSize(size)}
+                  className={`flex min-h-11 min-w-11 items-center justify-center rounded-full px-4 text-sm font-medium shadow ${
+                    brushSize === size ? 'bg-blue-600 text-white' : 'bg-white text-gray-900'
+                  }`}
+                >
+                  {size}
+                </button>
+              ))}
+              <button
+                type="button"
+                data-testid="brush-erase-toggle"
+                aria-pressed={brushMode === 'erase'}
+                onClick={() => setBrushMode((prev) => (prev === 'erase' ? 'paint' : 'erase'))}
+                className={`flex min-h-11 items-center justify-center rounded-full px-4 text-sm font-medium shadow ${
+                  brushMode === 'erase' ? 'bg-blue-600 text-white' : 'bg-white text-gray-900'
+                }`}
+              >
+                Erase
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                data-testid="undo-stroke"
+                onClick={handleUndoStroke}
+                className="flex min-h-11 items-center justify-center rounded-full bg-white px-4 text-sm font-medium text-gray-900 shadow"
+              >
+                Undo stroke
+              </button>
+              <button
+                type="button"
+                data-testid="exit-brush"
+                onClick={handleExitBrush}
+                className="flex min-h-11 items-center justify-center rounded-full bg-white px-4 text-sm font-medium text-gray-700 shadow"
+              >
+                Discard paint
+              </button>
+            </div>
+          </div>
+        )}
+
         {isDrawing ? (
           <div className="flex items-center gap-2">
             <button
@@ -794,15 +1122,26 @@ export default function MapShell() {
           </div>
         ) : (
           !pendingFeature &&
-          !editingArea && (
-            <button
-              type="button"
-              data-testid="start-drawing"
-              onClick={() => void handleStartDrawing()}
-              className="rounded-full bg-gray-900 px-5 py-3 text-base font-medium text-white shadow"
-            >
-              Draw area
-            </button>
+          !editingArea &&
+          !brushing && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                data-testid="start-drawing"
+                onClick={() => void handleStartDrawing()}
+                className="rounded-full bg-gray-900 px-5 py-3 text-base font-medium text-white shadow"
+              >
+                Draw area
+              </button>
+              <button
+                type="button"
+                data-testid="start-brush"
+                onClick={handleStartBrush}
+                className="rounded-full bg-blue-600 px-5 py-3 text-base font-medium text-white shadow"
+              >
+                Paint area
+              </button>
+            </div>
           )
         )}
       </div>
