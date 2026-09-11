@@ -1,27 +1,28 @@
 # Handoff — areamap
 
 Written 2026-09-10 at the end of the build-out session, updated 2026-09-11 when G6–G10
-shipped. Audience: the next session (human or agent) picking this project up. Everything
-below is verified, not assumed; where something was still in flight it says so. Nothing
-is in flight now.
+shipped and again that evening when G11 did. Audience: the next session (human or agent)
+picking this project up. Everything below is verified, not assumed; where something was
+still in flight it says so. Nothing is in flight now.
 
 ## What this is
 
 Personal map-annotation PWA for rating London neighbourhoods during a property search.
 Draw or paint an area, drop points and lines, rate -1/0/+1, comment, save; reference
-overlays for context; works offline; installable on a phone. Spec: `SPEC.md`.
-Invariants: `CLAUDE.md`. Decisions and their reasons: `docs/ARCHITECTURE.md`.
+overlays for context; works offline; installable on a phone, usable with a mouse and
+keyboard on a desktop. Spec: `SPEC.md`. Invariants: `CLAUDE.md`. Decisions and their
+reasons: `docs/ARCHITECTURE.md`.
 
 ## State at handoff
 
-**All ten goals in `docs/OBJECTIVES.md` are done.** G1 map shell, G2 schema+client,
+**All eleven goals in `docs/OBJECTIVES.md` are done.** G1 map shell, G2 schema+client,
 G3 MVP loop, G4 offline writes, G5 installable PWA (2026-09-10); G6 drawing precision,
-G7 load performance, G8 brush painting, G9 points and lines, G10 open-data overlays
-(2026-09-11). Each closed only after its `done_when` commands exited 0, re-run
-independently of the implementer. Full log with dates and deviations: `docs/TASKS.md`;
-per-goal breakdowns in `docs/TASKS-G*.md`.
+G7 load performance, G8 brush painting, G9 points and lines, G10 open-data overlays, and
+G11 desktop (2026-09-11, G11 that evening). Each closed only after its `done_when`
+commands exited 0, re-run independently of the implementer. Full log with dates and
+deviations: `docs/TASKS.md`; per-goal breakdowns in `docs/TASKS-G*.md`.
 
-What G6–G10 added, in one line each:
+What G6–G11 added, in one line each:
 
 - **G6** every placed vertex visible and draggable, an explicit finish control, snapping
   to saved borders, and geometry edits routed through `save-area` so cells rebuild.
@@ -34,15 +35,29 @@ What G6–G10 added, in one line each:
   `save-feature` edge function, with their own offline queue entries.
 - **G10** TfL stops, OS Open Greenspace and DEFRA road noise as static same-origin
   extracts under `public/overlays/`, toggled from the map, cached for offline use.
+- **G11** desktop usability: sessions that Escape can actually cancel — including a fix
+  for `Enter` re-firing a focused toolbar button, which was deleting a second vertex
+  rather than finishing the ring — map rotation removed instead of made recoverable,
+  keyboard-operable and width-capped sheets, hover cursors over saved geometry, and a
+  desktop Playwright lane (Chromium 1440x900, `--workers=1` per a dated amendment) over
+  suites made input-agnostic without touching mobile, which stays at 33/33.
 
-**Verification**: every `done_when` for G1–G10 measured green at `d2bf63e` on
-fresh-clone defaults, across three sweep passes. The earlier six-agent sweep against the
-G1–G5 app produced 16 findings, all fixed and re-verified (three real `save-area`
-concurrency/atomicity bugs, a ghost-click race dismissing the rating modal on touch, a
-broken advertised test command). Fix logs: `docs/TASKS-FIX*.md`.
+**Verification**: every `done_when` for G1–G10 measured green at `d2bf63e` on fresh-clone
+defaults, across three sweep passes; G11's re-run independently at `3631262` and again at
+the final tree before the merge (mobile 33/33, desktop 32/32, both `retries=0`). The
+earlier six-agent sweep against the G1–G5 app produced 16 findings, all fixed and
+re-verified (three real `save-area` concurrency/atomicity bugs, a ghost-click race
+dismissing the rating modal on touch, a broken advertised test command). Fix logs:
+`docs/TASKS-FIX*.md`.
 
 **CI**: `.github/workflows/ci.yml` runs every gate (db reset, types diff, build, unit,
-all e2e suites, PWA probe) on push and PR. Green on main after the merge.
+e2e per project in separate steps, PWA probe). Green on main after the merge, 10m51s. PR
+branches trigger once — push is scoped to main — rather than twice per commit.
+
+The lesson worth carrying from how that got fixed: **a documented invariant with nothing
+gating it can be contradicted indefinitely.** `ci.yml` sat outside every `done_when`, so
+nothing failed when it drifted. If an invariant matters, something has to run that fails
+when it is broken.
 
 ## Production
 
@@ -51,8 +66,9 @@ all e2e suites, PWA probe) on push and PR. Green on main after the merge.
   verified against the live project. Email auth on, confirm-email off. DB password:
   `~/.areamap-db-password` on Tor's machine (chmod 600), nowhere else.
 - **App shell**: GitHub Pages at `https://torenander.github.io/interactive-map/` — live,
-  probed 200 along with the overlay assets. Tiles: Greater London at z14, committed
-  in-repo as `public/tiles/london-z14.pmtiles`, same-origin.
+  probed 200 along with the overlay assets, re-probed after the G11 merge (main
+  fast-forwarded to baee6d9, PR #2 merged, Deploy green). Tiles: Greater London at z14,
+  committed in-repo as `public/tiles/london-z14.pmtiles`, same-origin.
 - **CD**: `.github/workflows/deploy.yml` on main; Pages source is "GitHub Actions".
   Every push to main (except docs/*.md-only) builds with the repo variables and deploys.
 - **Release ordering, keep it**: backend first. Migrations and functions were pushed to
@@ -101,6 +117,21 @@ all e2e suites, PWA probe) on push and PR. Green on main after the merge.
   pages on `startIndex`; an offset loop re-read page one forever and pulled 582,000
   "features" from a 14,242-feature band. Follow the response's own `next` link and
   reconcile against `numberMatched`.
+- **A click on saved geometry must wait for the map to re-tile.** MapLibre re-tiles a
+  geojson source asynchronously after `setData`, so a click issued straight after a save
+  can beat the render and land on nothing — silently, with no error.
+  `tests/e2e/rendered.ts` is the wait; `points-lines.spec.ts` had seven of them because
+  it hit the race for real, while `draw-precision` had none and failed once in a loaded
+  sweep. Fixed on that
+  asymmetry and never reproduced on a quiet machine (0/20 isolated, 0/10 full project), so
+  the fix is believed rather than demonstrated.
+- **The mobile Playwright project deliberately runs `desktop.spec.ts`** — it sets no
+  `testMatch`, so it runs every spec. That began as an oversight and was kept: the WebKit
+  run of that suite caught a focus bug the desktop run did not. Accidental coverage that
+  catches real bugs gets promoted, not scoped away.
+- **The e2e lock is `scripts/e2e-lock.sh`**, ownership-checked so nobody releases a lock
+  they did not take — and **builds take it too**, because `dist/` is shared mutable state
+  and concurrent builds corrupt it deterministically rather than occasionally.
 - Agent worktrees under `.claude/worktrees/` used to contaminate bare vitest globs;
   `vitest.config.ts` pins `tests/unit/**`.
 
@@ -115,6 +146,17 @@ all e2e suites, PWA probe) on push and PR. Green on main after the merge.
   the manual button is exercised but not proven independently.
 - Editing a saved point or line's *geometry* (moving it) is not built; rating, comment
   and delete are. Areas do support geometry edits.
+- **The mobile lane has never been measured under deliberate load.** Its 33/33 runs were
+  on a settled machine; the desktop lane's one failure appeared only inside a 40-command
+  sweep. Nothing suggests mobile is fragile, but nobody has looked.
+- **CI runs `retries: 2`, which would mask a low-rate flake entirely.** A flaky-count check
+  is on the backlog; until it exists, green in CI does not distinguish "passed" from
+  "passed on the third attempt".
+- **The `preventScroll` attribution is unresolved.** A `draw-precision` failure was once
+  attributed to that line and the attribution was retracted as confounded; the render race
+  above is a candidate explanation and an undemonstrated one. Nothing downstream depends on
+  the answer, which is not the same as the answer being known. Full account:
+  `docs/TASKS-G11.md`.
 
 ## Open items (all optional, none blocking)
 
