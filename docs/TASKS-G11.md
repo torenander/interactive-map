@@ -24,6 +24,12 @@ interactions). Every figure in the tasks below is measured, not estimated.
 Marks carry whose run they rest on. `[~]` is an implementer's watched run; `[x]` waits on
 the lead's independent validation.
 
+**How to read this file:** the boxes are a ledger, not a status board. Every one lags the
+work it describes — the implementer runs, reports, and only then does it get marked here —
+and the close-out box lags furthest, because the run it names is someone else's and the
+tick is mine. An unticked box means "not yet recorded", never "not yet done". Ask the
+owner; do not infer from this file, from a free lock, or from what is on the branch.
+
 ### src — draw-accuracy (commits 53d6b9d MapShell, cb80aaf RatingModal)
 
 - [~] Cap the rating sheet's width, centred, matching the overlay sheet
@@ -82,10 +88,17 @@ runs did not support. Three points, which are the record:
    no shipped behaviour depends on the answer, so the decisive experiment is deliberately
    not being run.
 
-Where the retracted wording still stands: the comment at `src/areas/RatingModal.tsx:64`
-and cb80aaf's commit message. Commit messages are immutable history, so this annotation is
-the correction — the same precedent as the `--workers=1` amendment — and a later reader
-should trust the ledger over either.
+Where the retracted wording stood: the comment at `src/areas/RatingModal.tsx:64` and
+cb80aaf's commit message. **The comment is fixed** — 3631262, comment-only, 3 insertions
+and 4 deletions with every changed line a `//`, verified by diff rather than by eye — and
+now states the constraint alone: focusing the sheet must not scroll the map under the
+pointer. It carries no retraction, because a comment carrying a retraction is still a
+comment carrying a story, and the next person to touch that modal needs the constraint,
+not our history with it.
+
+So the retracted wording survives in exactly one place: cb80aaf's commit message, which is
+immutable. This annotation is the correction — the same precedent as the `--workers=1`
+amendment — and a later reader should trust the ledger over it.
 
 Scope: the eight boxes above are unaffected. Each rests on a direct before/after
 measurement of the behaviour it claims (cursor values, bearing and pitch, control
