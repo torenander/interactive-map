@@ -105,6 +105,32 @@ An unconditional `rmdir` on release is the same defect wearing different clothes
 stays harmless only for as long as acquisition is correct. Both halves are guarded here;
 do not reintroduce either by inlining "just three lines" into a new script.
 
+### Write the cell grid down before comparing anything
+
+Before running a comparison, list the cells — every combination of the variable you care
+about and the configuration you will run it in — and mark which you will actually fill.
+It costs a minute and it catches the error below, which no amount of care does.
+
+Two investigations here failed the same way within an hour, in opposite directions:
+
+- A `preventScroll` fix was "bisected" to one line. Every run *with* the bug was a full
+  parallel two-project run; every run *without* it was a single spec in isolation.
+  Configuration and the variable moved together in all four comparisons, so the result
+  showed nothing.
+- A flakiness hypothesis compared 5 workers against 1. The source tree was also being
+  edited between runs. Same shape, and it took a timestamp check prompted by somebody
+  else's pushback to notice the comparison was not clean.
+
+Neither was carelessness. In both cases the investigator ran the variable they were
+interested in against whichever configuration was convenient, and the configuration
+rode along unexamined precisely because it was not the thing under study. Each was caught
+by the other person, which is not a control you can rely on.
+
+The grid also makes a deliberately empty cell legible. Three filled cells and one
+unfilled, with a stated reason, is a more honest artifact than four cells where one was
+inferred — and "we could have run it and decided it would not change anything" is a
+result worth recording rather than a gap to hide.
+
 ### Testing at your own commit in a shared worktree
 
 Several agents share one worktree, so `src/` often carries somebody else's uncommitted
