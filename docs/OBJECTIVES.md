@@ -292,7 +292,7 @@ work is additive rather than a breakpoint fork.
 npm run build
 npm run test
 npm run test:e2e -- --project=mobile
-npm run test:e2e -- --project=desktop
+npm run test:e2e -- --project=desktop --workers=1
 grep -q "dragRotate.disable()" src/map/MapShell.tsx
 grep -q "touchPitch.disable()" src/map/MapShell.tsx
 grep -q 'data-testid="cancel-drawing"' src/map/MapShell.tsx
@@ -301,8 +301,20 @@ grep -q "Escape" src/areas/RatingModal.tsx
 ```
 `--project=mobile` is the whole existing suite, 27 tests, green with no edits to its
 assertions — the "mobile first, not mobile only" check.
-`--project=desktop` is new (Chromium, 1440x900, `hasTouch: false`) and today exits 1 with
-`Project(s) "desktop" not found`. It runs `tests/e2e/desktop.spec.ts` plus the suites that
+> **Check amended 2026-09-11 (perf-probe, lead-approved):** the desktop command carries
+> `--workers=1` explicitly. Measured on the development machine: at 5 workers a full
+> desktop run went 32/32 and then failed 3; at 2 workers, 32/32 then 2 failed then 2
+> failed; at 1 worker, five consecutive runs were clean but for one — run 4's `perf-load`
+> failure at 11 ms against 10 ms, which was a defect in that assertion rather than
+> contention and is fixed in b46323d. Every failing test passed when run alone. The mobile
+> project at the same 5 workers was 6/6 clean, so this is weight rather than worker count
+> — Chromium at 1440x900 costs far more per worker than WebKit at 390x844. Not weakened to
+> pass: no assertion, threshold or timeout was changed, and the gate is stricter in
+> practice because it stops failing intermittently on merit. Cost is 174-192 s against
+> roughly 100 s. Convention, reasoning and the `ci.yml` implication: `docs/TESTING.md`.
+`--project=desktop` (Chromium, 1440x900, `hasTouch: false`) did not exist when this block
+was written — the command exited 1 with `Project(s) "desktop" not found` until the project
+landed, which is what made it a gate rather than a description. It runs `tests/e2e/desktop.spec.ts` plus the suites that
 are viewport-agnostic once input is abstracted: `map-shell`, `mvp-loop`, `offline`,
 `offline-map`, `perf-load`, `points-lines`, `draw-precision`, `brush`, `overlays`.
 `desktop.spec.ts` asserts: Escape during a polygon draw leaves no drawing controls on
@@ -311,8 +323,8 @@ right-drag leaves `getBearing()` and `getPitch()` at 0; the rating sheet and que
 are each no wider than 640 px at 1440x900; Escape closes the sheet, focus lands inside it
 on open, and Tab from the last control stays inside; and the cursor over a saved area,
 line and point is `pointer`, not `grab`.
-All five grep probes fail today — none of those strings exist — and pin the behaviours
-with no cheaper assertion.
+All five grep probes failed at drafting time — none of those strings existed — and pin the
+behaviours with no cheaper assertion.
 
 **out_of_scope**
 PWA work — `scripts/assert-pwa.mjs` already runs a plain desktop Chromium context and
