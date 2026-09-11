@@ -796,3 +796,18 @@ Residual accepted risk, documented: with client-generated ids, a caller who alre
 knows another user's area uuid can infer it is taken (their own save fails generically);
 guessing a v4 uuid is not a practical path, and server-generated ids would break offline
 idempotency.
+
+---
+
+# G6–G10 — planned, not started
+
+Goal blocks: `docs/OBJECTIVES.md` § G6–G10. Task breakdowns live in their own files,
+per the G2–G5 convention:
+
+- `docs/TASKS-G6.md` — Drawing precision (blocked by G3, G4)
+- `docs/TASKS-G7.md` — Load performance (blocked by G5)
+- `docs/TASKS-G8.md` — Brush painting of H3 cells (blocked by G3, G6)
+- `docs/TASKS-G9.md` — Point and line features (blocked by G3, G4, G6)
+- `docs/TASKS-G10.md` — Open data overlays (blocked by G5, G9)
+
+No task in these files has been started; every box is `[ ]`.

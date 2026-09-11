@@ -135,12 +135,153 @@ G3.
 
 ---
 
+## G6 — Drawing precision
+
+**objective**
+A polygon can be drawn accurately with one thumb at 390x844: every placed vertex is
+visible, any vertex can be dragged to correct it before or after saving, the ring is
+closed by an explicit control rather than by re-tapping the first vertex, and vertices
+snap to the borders of existing areas. Geometry edits reach the server through
+`save-area` so `area_cells` is rebuilt from the new geometry.
+
+**done_when**
+```
+npm run build
+npm run test
+npm run test:e2e -- tests/e2e/draw-precision.spec.ts
+npm run test:e2e -- tests/e2e/touch-draw.spec.ts
+npm run test:e2e -- tests/e2e/mvp-loop.spec.ts
+grep -q "showCoordinatePoints: true" src/map/MapShell.tsx
+grep -q "editable: true" src/map/MapShell.tsx
+grep -q "snapping:" src/map/MapShell.tsx
+! grep -q "context.action !== 'draw'" src/map/MapShell.tsx
+! grep -riq "crosshair" src/
+```
+`draw-precision.spec.ts` runs at 390x844 (the only Playwright project) and asserts:
+a coordinate-point marker renders for **every** placed vertex, not just the two
+`closingPoint` markers today's defaults produce; dragging a placed vertex moves the
+corresponding polygon coordinate; the ring closes via a `finish-area` control without
+tapping the first vertex, and the saved ring equals the tapped vertices; dragging a
+vertex of an already-saved area, saving, and reloading persists the new geometry **and**
+leaves `area_cells` rebuilt to match it (queried with the service-role key, as
+`touch-draw.spec.ts` does); and a vertex dropped near an existing area's border stores a
+coordinate exactly equal to that border's coordinate.
+`touch-draw.spec.ts` and `mvp-loop.spec.ts` must stay green unchanged — `editable: true`
+adds canvas drag handling, which is exactly where the WebKit ghost-click race lives.
+
+**out_of_scope**
+Crosshair / centre-reticle placement mode — a separate input model, worth its own goal
+once draggable vertices show whether occlusion is still the binding constraint.
+Higher-zoom (z15+) basemap tiles. Geometry union, clipping or self-intersection repair.
+Points, lines, brush painting.
+
+**blocked_by**
+G3, G4.
+
+---
+
+## G7 — Load performance
+
+**objective**
+First map paint is not gated on work the map does not need: tiles are cached per range rather than by downloading the whole archive, Terra Draw and the Supabase client load after the map exists, and the MapLibre worker is fetched in parallel with the app shell instead of behind it. Offline capability is unchanged.
+
+**done_when**
+```
+npm run build
+node scripts/assert-bundle-budget.mjs
+npm run test:e2e -- tests/e2e/perf-load.spec.ts
+npm run test:e2e -- tests/e2e/offline-map.spec.ts
+npm run test:e2e -- tests/e2e/offline.spec.ts
+```
+`assert-bundle-budget.mjs` sums gzip sizes of the entry chunk plus every `modulepreload`ed chunk in `dist/index.html` and exits non-zero if that total exceeds 380,000 B, or if any of those chunks contains the string `TerraDraw` or `GoTrueClient`. Dynamically imported chunks are excluded — that is the point.
+`perf-load.spec.ts` runs at 390x844 and asserts, on a reload with the service worker already controlling: zero `.pmtiles` requests are issued without a `Range` header, and the `maplibre-gl-worker` resource starts no later than the entry chunk's `responseEnd`.
+`offline-map.spec.ts` and `offline.spec.ts` are unchanged regression gates: offline capability is a shipped invariant, not a thing to renegotiate.
+
+**out_of_scope**
+Cross-origin glyph/sprite hosting. `cache-control` headers. `runFlush`'s refetch-all and `refreshSource`'s whole-collection `setData`. `save-area` latency. Tile content, bbox or maxzoom. Removing the worker-URL workaround — "the map is never created against an unresolved worker URL" must still hold.
+
+**blocked_by**
+G5.
+
+---
+
+## G8 — Brush painting of H3 cells
+
+**objective**
+Paint an area by dragging a finger: touched res-10 H3 cells accumulate, the selection becomes one polygon on release, and that polygon saves through `save-area` like a drawn one. Erase mode removes cells. One area per session.
+
+**done_when**
+```
+npm run build
+npm run test -- tests/unit/brush.test.ts
+npm run test:e2e -- tests/e2e/brush.spec.ts
+! grep -rn 'from("area_cells")' src --include="*.ts" --include="*.tsx"
+```
+`brush.test.ts` asserts, against the selection module with no map: a three-position stroke yields all three cells; a cell added twice appears once; erase removes only cells under the erase stroke; a one-cell selection converts to a single-ring polygon; two disconnected clusters are rejected rather than yielding two rings; undo restores the exact pre-stroke set; past 5,000 cells is refused.
+`brush.spec.ts` runs at 390x844 and asserts: a touch drag paints visible cells; the rating modal appears on release; submitting writes one `areas` row with a non-zero `area_cells` count; reload shows it as a polygon fill; the in-progress selection is not rendered as a saved area before submit.
+The grep probe holds the invariant that the client never writes `area_cells`; the brush derives cells for display only.
+
+**out_of_scope**
+More than one area per session. Brush-editing a saved area. Resolutions other than 10. Cell-level ratings. Geometry union or repair. Any change to the `save-area` contract.
+
+**blocked_by**
+G3, G6.
+
+---
+
+## G9 — Point and line features
+
+**objective**
+Drop a point and draw a line, each with a rating and comment, persisted in their own table behind their own single write path, rendered on the same map. `areas` is untouched.
+
+**done_when**
+```
+npx supabase db reset
+npx supabase gen types typescript --local | diff - src/db/types.ts
+npm run build
+npm run test -- tests/unit/save-feature.test.ts tests/unit/schema.test.ts
+npm run test:e2e -- tests/e2e/points-lines.spec.ts
+```
+`save-feature.test.ts` asserts: a point payload with `kind: 'line'` is rejected; `rating = 3` is rejected; a 2,001-char comment returns 422; the same uuid posted twice yields one row; another user's id returns the generic 404; a direct client `insert` into `map_features` is refused by the database.
+`schema.test.ts` gains: deleting a user cascades to their features; a second user's `select` on another user's feature returns zero rows; no `map_features` row has `dimension <> 'overall'`.
+`points-lines.spec.ts` runs at 390x844 and asserts the round trip for both kinds — place/draw, rate, comment, save, reload, edit rating, reload, delete, reload and gone — and that a point inside an existing area is still tappable.
+
+**out_of_scope**
+H3 indexing of points or lines. Brush interaction with features. Snapping, routing, line simplification. Merging into `areas`. Multi-part geometries.
+
+**blocked_by**
+G3, G4, G6.
+
+---
+
+## G10 — Open data overlays
+
+**objective**
+Toggle read-only reference layers — TfL stops, OS Open Greenspace, DEFRA road-noise bands — over the basemap from static build-time extracts on the app's own origin. No runtime third-party requests, nothing keyed or metered in the path, and overlays work offline once cached.
+
+**done_when**
+```
+npm run build
+node scripts/assert-overlays.mjs
+npm run test -- tests/unit/overlays.test.ts
+npm run test:e2e -- tests/e2e/overlays.spec.ts
+! grep -rniE "tfl\.gov\.uk|api\.os\.uk|environment\.data\.gov\.uk" src --include="*.ts" --include="*.tsx"
+```
+`overlays.test.ts` asserts: default state is all-off; toggle state survives reload; every entry has an attribution; ordering puts overlays below area, point and line layers.
+`overlays.spec.ts` runs at 390x844 and asserts: enabling an overlay renders its features and adds its attribution to the DOM; disabling removes both; OSM attribution is present in every state; with the network blocked after one warm load an enabled overlay still renders; no request leaves the app's origin while toggling.
+The grep probe holds that no third-party data host appears in application source.
+
+**out_of_scope**
+Joining overlay data to `area_cells` or to ratings. Overlay-derived scoring or suggestions. Live or scheduled refresh (the fetch script is run by hand, like the basemap extract). Any keyed, metered or uncapped-billing service in the runtime path. User-supplied overlay files.
+
+**blocked_by**
+G5, G9.
+
+---
+
 ## Not goals
 
 Do not start these without a new block in this file:
 
-- Brush painting of H3 cells
-- Point and line features
 - Rating dimensions beyond `'overall'`
 - Multi-user, sharing, shared areas
-- Open data overlays (TfL, Ordnance Survey, DEFRA)
