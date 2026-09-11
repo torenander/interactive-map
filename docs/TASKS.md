@@ -884,8 +884,8 @@ back onto the critical path (exit 1, 407,759 B).
 
 # G8 — Brush painting of H3 cells — done 2026-09-11
 
-Task breakdown: `docs/TASKS-G8.md` (core first, MapShell wiring once G7 stage 2 released
-the file; that file does not record its teammate name).
+Task breakdown: `docs/TASKS-G8.md` (teammate goals-author, core first, MapShell wiring
+once G7 stage 2 released the file).
 
 All four `done_when` entries exit 0, re-run independently by the lead after the
 teammate's own run: the `area_cells` grep probe, `npm run build`, 35 unit tests, and
