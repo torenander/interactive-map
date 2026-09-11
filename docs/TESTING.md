@@ -79,6 +79,17 @@ preview server was killed, touch-draw's `locator.tap` on a 30 s timeout. So cont
 produces non-deterministic failures wherever the timing happens to land when two things run
 at once, and the fix for those is the lock rather than the tests.
 
+**Amended 2026-09-11 (second):** one of the contention-shaped failures turned out to have
+its own cause. `draw-precision.spec.ts` clicked a saved area with no wait for the geojson
+source to re-tile after the save, so on a loaded machine the click beat the render and hit
+nothing. Fixed in 89e9a67 **on the code asymmetry, not on a reproduction** — it failed once
+inside a 40-command sweep and never again in 20 isolated runs or 10 full desktop runs on a
+quiet machine. `points-lines.spec.ts` carries seven such waits because that suite hit the
+race for real; the sibling suites had none. This mechanism is also a candidate explanation
+for the `preventScroll` observation recorded as unresolved — a click landing where the
+saved area is not yet painted looks identical to one landing where it has been scrolled
+away — and that remains unproven.
+
 **Amended 2026-09-11:** that conclusion was right about the machine and wrong to stop
 there. One of the three original failures, `perf-load`, had a findable cause of its own —
 its `workerStart <= entryEnd` check compared two service-worker cache hits milliseconds
@@ -104,6 +115,30 @@ Two failure modes this replaced, both real:
 An unconditional `rmdir` on release is the same defect wearing different clothes, and it
 stays harmless only for as long as acquisition is correct. Both halves are guarded here;
 do not reintroduce either by inlining "just three lines" into a new script.
+
+### A broken measurement looks more convincing than a real one
+
+Three harnesses produced confident numbers while measuring nothing in a single day. The
+pattern is worth more than any of them individually: a broken measurement fails uniformly,
+and uniformity reads as signal. Real results are ragged.
+
+- A lock guard tested `[ -d "$LOCK" ]`, which is true precisely when somebody else holds
+  the lock. Two agents each believed they held it, with no error on either side.
+- A rate measurement passed `--screenshot` and `--video`, which are config-only. Playwright
+  exited on `unknown option` before starting a browser, 20 times. The tally read as a 100%
+  failure rate, complete with 20 artifact directories — all empty.
+- A verification script's `exit=%s` column printed `$?` from its own guard rather than from
+  the test command, so passing runs reported `exit=1`.
+
+Guards that follow from it, in every measurement harness:
+
+- **A run with no test-count summary is a harness error, not a result.** Abort and say how
+  many valid runs you had; do not let it count as a failure.
+- **Read one artifact per measurement, never only the tally.** All three above were caught
+  by opening a log or noticing a blank column, never by the summary line.
+- **Suspect uniformity.** 20/20 identical failures is far more likely to be a broken
+  harness than a 100% failure rate. The genuine result that followed was ragged —
+  26.8 to 32.2 seconds across 20 passes.
 
 ### Write the cell grid down before comparing anything
 
