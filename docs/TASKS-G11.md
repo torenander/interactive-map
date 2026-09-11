@@ -65,6 +65,34 @@ the lead's independent validation.
 Gate evidence for the above, draw-accuracy's run: unit suite 88/88 exit 0; the `mobile`
 project 33 passed, 0 failed.
 
+**Correction, 2026-09-11, raised by draw-accuracy against their own evidence.** The
+`preventScroll` line added with the focus work carries a causal claim that its runs do not
+support. It appears in `src/areas/RatingModal.tsx:64` ("measured as a regression in
+draw-precision.spec.ts") and in commit cb80aaf's message ("was bisected to this line").
+Neither is in this ledger, and neither is mine to edit — the comment is in frozen `src/*`,
+and the commit message is history.
+
+What the runs actually were: every comparison *with* the suspect line present was a full
+two-project parallel run, and every comparison *without* it was an isolated single-spec
+run. Configuration and variable moved together across all five, so nothing was isolated.
+perf-probe has since run the missing cell — the line unfixed, `--workers=1`, non-serial —
+and `draw-precision` came back green, which is consistent with the original failure having
+been contention.
+
+The accurate statement: observed once as a `draw-precision` failure in a full parallel run;
+a later isolated run with the line unfixed was green, so **the causal link is unproven and
+the change stands on its own rationale** — `focus()` scrolls, the sheet sits at the bottom
+of the viewport, and a modal must not move the map under the pointer. The experiment that
+would settle it, the line unfixed under a full parallel run, has not been run by anyone;
+draw-accuracy has offered to run it once the `src` freeze lifts and to report it either
+way.
+
+Scope: this touches the `preventScroll` rationale only. The eight boxes above are
+unaffected — each rests on a direct before/after measurement of the behaviour it claims
+(cursor values, bearing and pitch, control visibility, sheet width in pixels, the Tab
+sequence, ring length), not on inference from a failure. Box 8's `Enter` finding in
+particular is a measurement, not a deduction.
+
 ### tests and config — perf-probe (task #26)
 
 - [ ] Derive `map-shell.spec.ts`'s two geometry assertions from the viewport (`:6` exact
