@@ -29,6 +29,39 @@ export default defineConfig({
         viewport: { width: 390, height: 844 },
       },
     },
+    // G11. Desktop is additive, never a replacement: mobile stays the primary
+    // target and runs everything. This project runs the suites that are
+    // viewport-agnostic once input is abstracted (tests/e2e/input.ts), plus
+    // desktop.spec.ts for the behaviours that only exist with a mouse and
+    // keyboard.
+    //
+    // touch-draw.spec.ts is excluded on purpose rather than omitted by accident:
+    // it reproduces a WebKit ghost-click race between touch and the synthesised
+    // mouse event, so there is nothing for it to assert without touch.
+    //
+    // `hasTouch: false` is what tests/e2e/input.ts dispatches on, so it is
+    // load-bearing config, not documentation.
+    {
+      name: 'desktop',
+      testMatch: [
+        'desktop.spec.ts',
+        'map-shell.spec.ts',
+        'mvp-loop.spec.ts',
+        'offline.spec.ts',
+        'offline-map.spec.ts',
+        'perf-load.spec.ts',
+        'points-lines.spec.ts',
+        'draw-precision.spec.ts',
+        'brush.spec.ts',
+        'overlays.spec.ts',
+      ],
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1440, height: 900 },
+        hasTouch: false,
+        isMobile: false,
+      },
+    },
   ],
   webServer: {
     command: `npm run build && npx vite preview --port ${PREVIEW_PORT} --strictPort`,
