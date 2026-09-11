@@ -14,6 +14,7 @@
   "dependencies": {
     "@protomaps/basemaps": "^5.7.2",
     "@supabase/supabase-js": "^2.116.0",
+    "h3-js": "^4.5.0",
     "maplibre-gl": "^6.9.0",
     "pmtiles": "^4.5.0",
     "react": "^19.2.8",
@@ -29,7 +30,6 @@
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
     "fake-indexeddb": "^6.2.5",
-    "h3-js": "^4.5.0",
     "oxlint": "^1.81.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
