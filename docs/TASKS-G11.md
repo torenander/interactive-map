@@ -235,3 +235,30 @@ is not in the file on disk, and the stack pointed at a comment line, because per
 was editing that spec while the run was in flight. Recorded so the log and the ledger can
 be squared later; it is not a G11 regression, and it is not evidence for or against any
 box above.
+
+## Fix — 2026-09-11: render-waits before clicking saved geometry
+
+The G11 sweep's desktop lane failed once on `draw-precision.spec.ts:270`, "a vertex of a
+saved area can be dragged": a tap on the saved area never opened the rating sheet.
+
+Cause, found in the code rather than in a reproduction. Clicking a saved area goes through
+MapLibre's hit test, and the geojson source re-tiles asynchronously after `setData`. The
+spec had only a DB round trip between the save and the tap, so on a loaded machine the
+click wins and lands on nothing — silently, with no error. `points-lines.spec.ts` carries
+seven such waits, added because that suite hit the race for real; `draw-precision` and
+`desktop.spec` had zero.
+
+**Fixed on the asymmetry, NOT reproduced.** Numbers, so nobody reconstructs a reproduction
+that did not happen:
+
+| Cell | Result |
+|---|---|
+| `draw-precision` alone, quiet machine | 0 failed / 20 |
+| Full desktop project, quiet machine | 0 failed / 10 |
+| Full desktop project, inside the 40-command sweep | 1 failure, 1 occurrence |
+
+Fix in 89e9a67 (`tests/e2e/rendered.ts` plus both call sites), verified as not breaking
+either lane: mobile 33 passed x3, desktop 32 passed x3 at `--workers=1`, zero failing tests
+across six runs. That verification cannot confirm the fix works — the failure never
+reproduced quiet — it establishes only that a wait-then-tap cannot pass where a bare tap
+could not.
