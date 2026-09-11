@@ -2,12 +2,24 @@
 // shows queued state, not success; restoring the network flushes it and the area appears
 // in the database exactly once.
 //
-// Driver note: this project's mobile profile is WebKit (devices['iPhone 14']), and
-// `context.setOffline(true)` is known to not reliably block requests to localhost on
-// WebKit. The actual block here is `page.route()` aborting the save-area function
-// call — that's the one thing standing between "saved" and "queued" in this test.
-// `setOffline` is still toggled alongside it for realism (navigator.onLine, the
-// `online`/`offline` events) but is not load-bearing for the assertions below.
+// Driver note: this project's mobile profile is WebKit (devices['iPhone 14']).
+// `context.setOffline()` is the load-bearing block here — it is what stands between
+// "saved" and "queued" — and it is the only one.
+//
+// This comment used to claim the opposite: that `setOffline` was unreliable against
+// localhost and that a `page.route(...).abort()` on the save-area call was doing the
+// real work. Measured on 2026-09-11, both halves of that were wrong, and the route
+// call was inert. `save-area` is invoked through `supabase.functions.invoke`, which
+// the service worker mediates, and page-level route interception never sees a request
+// the service worker handles. Isolating the two mechanisms:
+//
+//   setOffline only, route removed  -> passes (4.3s)
+//   route only, setOffline removed  -> FAILS: the save reaches the server, no queued
+//                                      banner appears
+//
+// So the route call is gone rather than left in as decoration. If you are writing
+// another offline suite: reach for `context.setOffline()`, and do not assume
+// `page.route` can block anything the service worker touches.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { test, expect, type Page } from '@playwright/test'
@@ -112,8 +124,8 @@ test('save with the network blocked queues instead of succeeding, then flushes o
 }) => {
   await signIn(page)
 
-  // The load-bearing block: abort the save-area function call outright.
-  await page.route('**/functions/v1/save-area**', (route) => route.abort())
+  // The block. See the driver note at the top for why this is the only mechanism
+  // that works here, and what was measured to establish that.
   await context.setOffline(true)
 
   await drawPolygon(page)
@@ -137,7 +149,6 @@ test('save with the network blocked queues instead of succeeding, then flushes o
   // `online` event, which MapShell listens for and may already be flushing by the
   // time we get to the manual button below — so the click is best-effort: if the
   // auto-flush already emptied the queue (button/banner gone), that's success too.
-  await page.unroute('**/functions/v1/save-area**')
   await context.setOffline(false)
   try {
     await page.getByTestId('flush-queue').click({ timeout: 2_000 })
