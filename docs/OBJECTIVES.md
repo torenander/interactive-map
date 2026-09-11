@@ -299,8 +299,15 @@ grep -q 'data-testid="cancel-drawing"' src/map/MapShell.tsx
 grep -q "Escape" src/areas/RatingModal.tsx
 ! grep -q "844 \* (2 / 3)" tests/e2e/map-shell.spec.ts
 ```
-`--project=mobile` is the whole existing suite, 27 tests, green with no edits to its
-assertions — the "mobile first, not mobile only" check.
+`--project=mobile` is the whole suite at 390x844, green with no edits to its assertions —
+the "mobile first, not mobile only" check. It runs *every* spec in `tests/e2e/`, including
+`desktop.spec.ts`, because the mobile project sets no `testMatch`: 33 tests where the
+pre-G11 suite was 27. That started as an oversight and is kept deliberately — the WebKit
+run of `desktop.spec.ts` caught a focus bug the desktop run did not, and accidental
+coverage that catches real bugs gets promoted rather than scoped away. The assertions stay
+meaningful in both projects rather than vacuous in one: the 640 px sheet cap holds at
+390 px, and `tests/e2e/input.ts` dispatches on `hasTouch` so each project exercises its own
+input model. Config comment in `playwright.config.ts`, convention in `docs/TESTING.md`.
 > **Check amended 2026-09-11 (perf-probe, lead-approved):** the desktop command carries
 > `--workers=1` explicitly. Measured on the development machine: at 5 workers a full
 > desktop run went 32/32 and then failed 3; at 2 workers, 32/32 then 2 failed then 2
