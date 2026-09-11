@@ -34,6 +34,21 @@ import { deleteArea, fetchAreas, OfflineWriteError, saveArea, type AreaFeature }
 import { useSession } from '../auth/useSession'
 import { flushQueuedWrites } from '../offline/flush'
 import { enqueueWrite, listQueuedWrites, type QueuedWrite } from '../offline/queue'
+import {
+  deleteFeature,
+  fetchFeatures,
+  kindForGeometry,
+  saveFeature,
+  type FeatureGeometry,
+  type FeatureKind,
+  type MapFeature,
+} from '../db/features'
+import {
+  enqueueFeatureWrite,
+  flushQueuedFeatureWrites,
+  listQueuedFeatureWrites,
+  type QueuedFeatureWrite,
+} from '../offline/featureQueue'
 
 // Vite 8 / rolldown does not emit MapLibre's worker chunk from its internal
 // `new Worker(new URL(...))`, so the runtime request for the worker falls
@@ -95,9 +110,26 @@ const BRUSH_LINE_LAYER = 'brush-selection-line'
 
 // Terra Draw's own name for the select mode, and the mode name carried in the
 // `properties.mode` of every feature we hand it.
+// Points and lines (G9). Their own source and layers, above the area fills: a point
+// dropped inside a rated area has to stay tappable, which it cannot be if a large
+// translucent polygon is painted over it.
+const SAVED_FEATURES_SOURCE = 'saved-features'
+const SAVED_FEATURES_LINE_LAYER = 'saved-features-line'
+const SAVED_FEATURES_CIRCLE_LAYER = 'saved-features-circle'
+
 const SELECT_MODE = 'select'
 const POLYGON_MODE = 'polygon'
+const POINT_MODE = 'point'
+const LINESTRING_MODE = 'linestring'
 const STATIC_MODE = 'static'
+
+// Circle radius for a saved point. 7px at the default pixel ratio is a ~14px target
+// before the 44px tap tolerance queryRenderedFeatures is given below — big enough to see
+// against a rated area's fill, small enough not to hide the street it marks.
+const FEATURE_CIRCLE_RADIUS = 7
+// How far from a point or line a tap still counts as hitting it. Field-UX tap targets are
+// 44px (docs/TASKS-FIX-TOUCH.md); a 14px circle needs the slack to be thumb-reachable.
+const FEATURE_TAP_SLOP = 22
 
 // How close (container pixels) a vertex has to land before it snaps to a saved area's
 // vertex. Deliberately smaller than the 40px Terra Draw defaults to for its own pointer
@@ -140,6 +172,40 @@ type EditingArea = {
   rating: number
   comment: string
   geometry: Polygon
+}
+
+// A point or line drawn but not yet rated. Deliberately parallel to PendingFeature
+// rather than merged with it: the two go to different tables through different write
+// paths, and keeping them apart means none of the area code above had to change.
+type PendingMapFeature = {
+  drawId: string
+  kind: FeatureKind
+  geometry: FeatureGeometry
+}
+
+// An open edit session on a saved point or line. Unlike EditingArea this holds no
+// `drawId` and loads nothing into Terra Draw: G9's done_when asks for editing the rating,
+// not the geometry, so there is nothing to drag and no reason to stand the map into
+// select mode. Moving a saved point is a later goal, not a hidden half-built one.
+type EditingMapFeature = {
+  id: string
+  kind: FeatureKind
+  rating: number
+  comment: string
+  geometry: FeatureGeometry
+}
+
+type RenderMapFeature = {
+  type: 'Feature'
+  geometry: FeatureGeometry
+  properties: {
+    id: string
+    kind: FeatureKind
+    rating: number
+    comment: string | null
+    created_at: string
+    queued?: boolean
+  }
 }
 
 // What actually gets rendered: synced areas (from fetchAreas) plus anything still sitting
@@ -186,6 +252,34 @@ function combineFeatures(synced: AreaFeature[], queued: QueuedWrite[]): RenderFe
   const queuedIds = new Set(queued.map((q) => q.id))
   const syncedVisible = synced.filter((a) => !queuedIds.has(a.properties.id))
   return [...syncedVisible, ...queued.map(queuedToRenderFeature)]
+}
+
+function queuedToRenderMapFeature(entry: QueuedFeatureWrite): RenderMapFeature {
+  return {
+    type: 'Feature',
+    geometry: entry.geom,
+    properties: {
+      id: entry.id,
+      kind: entry.kind,
+      rating: entry.rating,
+      comment: entry.comment,
+      created_at: new Date(entry.queuedAt).toISOString(),
+      queued: true,
+    },
+  }
+}
+
+// Same precedence rule combineFeatures applies to areas: a queued entry wins over a
+// synced row with the same id, because it is the more recent, not-yet-confirmed edit.
+function combineMapFeatures(
+  synced: MapFeature[],
+  queued: QueuedFeatureWrite[],
+): RenderMapFeature[] {
+  const queuedIds = new Set(queued.map((q) => q.id))
+  return [
+    ...synced.filter((f) => !queuedIds.has(f.properties.id)),
+    ...queued.map(queuedToRenderMapFeature),
+  ]
 }
 
 // Terra Draw's polygon geometry may not close its ring (first coordinate repeated as
@@ -245,6 +339,16 @@ export default function MapShell() {
 
   const [pendingFeature, setPendingFeature] = useState<PendingFeature | null>(null)
   const [editingArea, setEditingArea] = useState<EditingArea | null>(null)
+
+  const [mapFeatures, setMapFeatures] = useState<MapFeature[]>([])
+  const mapFeaturesRef = useRef<MapFeature[]>([])
+  mapFeaturesRef.current = mapFeatures
+  const [queuedMapFeatures, setQueuedMapFeatures] = useState<QueuedFeatureWrite[]>([])
+  const [pendingMapFeature, setPendingMapFeature] = useState<PendingMapFeature | null>(null)
+  const [editingMapFeature, setEditingMapFeature] = useState<EditingMapFeature | null>(null)
+  // Which point/line mode the user is in the middle of, or null. Only 'linestring' needs
+  // a finish control; a point is complete the moment it is placed.
+  const [featureMode, setFeatureMode] = useState<FeatureKind | null>(null)
   // The map's `click` handler and Terra Draw's snap callback are both registered once,
   // on load, so they close over the first render's state. These refs are what they read
   // instead. `editingIdRef` also keeps an area from snapping to its own vertices.
@@ -252,6 +356,10 @@ export default function MapShell() {
   pendingRef.current = pendingFeature
   const editingIdRef = useRef<string | null>(null)
   editingIdRef.current = editingArea?.id ?? null
+  const pendingMapFeatureRef = useRef<PendingMapFeature | null>(null)
+  pendingMapFeatureRef.current = pendingMapFeature
+  const editingMapFeatureIdRef = useRef<string | null>(null)
+  editingMapFeatureIdRef.current = editingMapFeature?.id ?? null
   const [modalVisible, setModalVisible] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -373,6 +481,41 @@ export default function MapShell() {
         paint: { 'line-color': '#1d4ed8', 'line-width': 2, 'line-dasharray': [2, 1] },
       })
 
+      // Points and lines last, so they paint above the area fills and the brush. G9
+      // requires a point inside a rated area to stay tappable, and draw order is half of
+      // that — the other half is the precedence rule in handleAreaClick below.
+      instance.addSource(SAVED_FEATURES_SOURCE, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+        // Same reason the areas source sets it: dedupe queryRenderedFeatures by our own
+        // uuid rather than a tile-local id.
+        promoteId: 'id',
+      })
+      instance.addLayer({
+        id: SAVED_FEATURES_LINE_LAYER,
+        type: 'line',
+        source: SAVED_FEATURES_SOURCE,
+        filter: ['==', ['get', 'kind'], 'line'],
+        paint: {
+          'line-color': fillColorExpression(),
+          'line-width': 4,
+        },
+      })
+      instance.addLayer({
+        id: SAVED_FEATURES_CIRCLE_LAYER,
+        type: 'circle',
+        source: SAVED_FEATURES_SOURCE,
+        filter: ['==', ['get', 'kind'], 'point'],
+        paint: {
+          'circle-color': fillColorExpression(),
+          'circle-radius': FEATURE_CIRCLE_RADIUS,
+          // A white collar keeps a point legible on top of a same-coloured area fill —
+          // a green point on a green area is otherwise invisible.
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2,
+        },
+      })
+
       // Snap a vertex being placed or dragged onto the nearest vertex of an already-saved
       // area, so neighbouring areas share an exact border coordinate instead of leaving a
       // sliver. Terra Draw's own toCoordinate/toLine snapping cannot do this: saved areas
@@ -388,7 +531,14 @@ export default function MapShell() {
         )
 
       const [
-        { TerraDraw, TerraDrawModeUndoRedo, TerraDrawPolygonMode, TerraDrawSelectMode },
+        {
+          TerraDraw,
+          TerraDrawLineStringMode,
+          TerraDrawModeUndoRedo,
+          TerraDrawPointMode,
+          TerraDrawPolygonMode,
+          TerraDrawSelectMode,
+        },
         { TerraDrawMapLibreGLAdapter },
       ] = await Promise.all([import('terra-draw'), import('terra-draw-maplibre-gl-adapter')])
 
@@ -424,6 +574,19 @@ export default function MapShell() {
               },
             },
           }),
+          // One tap places a point and finishes it — there is no second vertex to wait
+          // for, so no finish control applies to this mode.
+          new TerraDrawPointMode(),
+          // Lines get the same precision treatment polygons got in G6: every placed
+          // vertex visible, snapping to saved area borders, and a closing radius small
+          // enough not to swallow a deliberate last vertex — "Finish line" ends it.
+          new TerraDrawLineStringMode({
+            showCoordinatePoints: true,
+            editable: true,
+            snapping: { toCustom: snapToSavedAreas },
+            pointerDistance: POINTER_DISTANCE,
+            keyEvents: { finish: FINISH_KEY, cancel: CANCEL_KEY },
+          }),
         ],
         undoRedo: { modeLevel: new TerraDrawModeUndoRedo() },
       })
@@ -435,9 +598,24 @@ export default function MapShell() {
 
       terraDraw.on('finish', (id, context) => {
         const feature = terraDraw.getSnapshotFeature(id)
-        if (!feature || feature.geometry.type !== 'Polygon') return
-        const geometry = closeRing(feature.geometry as Polygon)
+        if (!feature) return
         const drawId = String(id)
+
+        // Points and lines. A point finishes on its single tap; a line finishes on the
+        // "Finish line" control, which dispatches the same key polygons use. Both land
+        // here and go straight to the rating sheet — there is no select-mode hold,
+        // because G9 edits the rating, not the geometry (see EditingMapFeature).
+        if (feature.geometry.type === 'Point' || feature.geometry.type === 'LineString') {
+          const geometry = feature.geometry as FeatureGeometry
+          setPendingMapFeature({ drawId, kind: kindForGeometry(geometry), geometry })
+          setModalVisible(true)
+          setFeatureMode(null)
+          terraDraw.setMode(STATIC_MODE)
+          return
+        }
+
+        if (feature.geometry.type !== 'Polygon') return
+        const geometry = closeRing(feature.geometry as Polygon)
 
         // A fresh draw closing its ring. Hand it to the rating sheet, then hold it in
         // select mode rather than static so its vertices stay draggable while the sheet
@@ -460,6 +638,42 @@ export default function MapShell() {
         setEditingArea((prev) => (prev && prev.drawId === drawId ? { ...prev, geometry } : prev))
       })
 
+      // Is there a saved point or line under this tap? Asked with a slop box rather than
+      // the exact pixel, because a 14px circle is not a 44px tap target on its own.
+      const featuresUnder = (e: MapLayerMouseEvent) =>
+        instance.queryRenderedFeatures(
+          [
+            [e.point.x - FEATURE_TAP_SLOP, e.point.y - FEATURE_TAP_SLOP],
+            [e.point.x + FEATURE_TAP_SLOP, e.point.y + FEATURE_TAP_SLOP],
+          ],
+          { layers: [SAVED_FEATURES_CIRCLE_LAYER, SAVED_FEATURES_LINE_LAYER] },
+        )
+
+      // Opening a saved point or line for rating. Registered on the map rather than on
+      // the feature layers so the slop box above decides the hit, not MapLibre's exact
+      // per-layer hit test — otherwise the tap target is the drawn circle and nothing more.
+      const handleFeatureClick = (e: MapLayerMouseEvent) => {
+        if (brushingRef.current) return
+        if (pendingRef.current || editingIdRef.current) return
+        if (pendingMapFeatureRef.current || editingMapFeatureIdRef.current) return
+        const hit = featuresUnder(e)[0]
+        if (!hit) return
+        const id = hit.properties?.id as string | undefined
+        if (!id || hit.properties?.queued) return // not-yet-synced features aren't editable
+        const saved = mapFeaturesRef.current.find((f) => f.properties.id === id)
+        if (!saved) return
+
+        setEditingMapFeature({
+          id: saved.properties.id,
+          kind: saved.properties.kind,
+          rating: saved.properties.rating,
+          comment: saved.properties.comment ?? '',
+          geometry: saved.geometry,
+        })
+        setModalVisible(true)
+      }
+      instance.on('click', handleFeatureClick)
+
       const handleAreaClick = (e: MapLayerMouseEvent) => {
         // Precedence, decided once and recorded in docs/TASKS-G8.md: while brush mode is
         // active the pointer belongs to the brush, and nothing else. A stroke that
@@ -469,6 +683,13 @@ export default function MapShell() {
         // entry points: brush mode cannot be started while a draw or edit session is
         // open, and exiting brush mode hands taps back to this handler.
         if (brushingRef.current) return
+        // Second rule, added in G9 and recorded in docs/TASKS-G9.md: a point or line
+        // under the tap beats the area beneath it. Features are small marks drawn on top
+        // of large translucent fills, so without this an area would swallow every tap on
+        // a point inside it — which G9's done_when explicitly forbids. The reverse is
+        // never a problem: an area is still tappable everywhere a feature is not.
+        if (featuresUnder(e).length > 0) return
+        if (pendingMapFeatureRef.current || editingMapFeatureIdRef.current) return
         const feature = e.features?.[0]
         if (!feature) return
         const id = feature.properties?.id as string | undefined
@@ -556,6 +777,29 @@ export default function MapShell() {
     }
   }, [mapReady, session])
 
+  // Saved point/line features follow exactly the same rules as areas: loaded once the
+  // map exists, reloaded on sign-in, cleared on sign-out.
+  useEffect(() => {
+    if (!mapReady) return
+    if (!session) {
+      setMapFeatures([])
+      return
+    }
+    let cancelled = false
+    fetchFeatures()
+      .then((fetched) => {
+        if (cancelled) return
+        setMapFeatures(fetched)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setLoadError(err instanceof Error ? err.message : 'Could not load saved features')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [mapReady, session])
+
   // The offline queue is loaded independently of sign-in state: it can hold entries from
   // a previous session that never got a chance to flush.
   useEffect(() => {
@@ -565,6 +809,11 @@ export default function MapShell() {
       .catch(() => {
         // Nothing queued is indistinguishable from "couldn't read the queue" here; the
         // next successful queue read (e.g. after the next save attempt) reconciles it.
+      })
+    listQueuedFeatureWrites()
+      .then(setQueuedMapFeatures)
+      .catch(() => {
+        // Same reasoning as above.
       })
   }, [mapReady])
 
@@ -578,6 +827,18 @@ export default function MapShell() {
     const combined = combineFeatures(areas, queuedAreas)
     refreshSource(editingId ? combined.filter((f) => f.properties.id !== editingId) : combined)
   }, [mapReady, areas, queuedAreas, editingArea, refreshSource])
+
+  // Same for points and lines. Nothing is withheld here the way an area under edit is:
+  // a feature edit session never loads anything into Terra Draw, so the saved geometry
+  // stays the only copy on screen.
+  useEffect(() => {
+    if (!mapReady) return
+    const source = map.current?.getSource(SAVED_FEATURES_SOURCE) as GeoJSONSource | undefined
+    source?.setData({
+      type: 'FeatureCollection',
+      features: combineMapFeatures(mapFeatures, queuedMapFeatures),
+    })
+  }, [mapReady, mapFeatures, queuedMapFeatures])
 
   // Paint the current selection. Driven by state rather than written from the pointer
   // handlers so what is on screen is always what React last rendered from.
@@ -712,14 +973,33 @@ export default function MapShell() {
       await flushQueuedWrites((entry) =>
         saveArea({ id: entry.id, geom: entry.geom, rating: entry.rating, comment: entry.comment }),
       )
+      // Features flush in the same cycle, through their own write path. Not interleaved
+      // with the areas above: a feature that fails to flush must not leave an area
+      // queued behind it, and vice versa — each queue drains independently and whatever
+      // fails stays put (docs/OBJECTIVES.md § G4).
+      await flushQueuedFeatureWrites((entry) =>
+        saveFeature({
+          id: entry.id,
+          geom: entry.geom,
+          kind: entry.kind,
+          rating: entry.rating,
+          comment: entry.comment,
+        }),
+      )
     } finally {
       const remaining = await listQueuedWrites()
       setQueuedAreas(remaining)
+      setQueuedMapFeatures(await listQueuedFeatureWrites())
       try {
         const fresh = await fetchAreas()
         setAreas(fresh)
       } catch {
         // Stay with what we had; the next successful load reconciles.
+      }
+      try {
+        setMapFeatures(await fetchFeatures())
+      } catch {
+        // Same.
       }
       flushingRef.current = false
       setFlushing(false)
@@ -751,11 +1031,46 @@ export default function MapShell() {
     draw.current?.undo()
   }
 
+  // Entering point or line mode. Same guard handleStartBrush uses: one session owns the
+  // pointer, so an open draw, edit or brush session blocks this rather than silently
+  // taking the pointer from it.
+  async function handleStartFeature(kind: FeatureKind) {
+    if (pendingFeature || editingArea || pendingMapFeature || editingMapFeature) return
+    if (brushing) return
+    const terraDraw = await drawReady.current
+    if (!terraDraw) return
+    terraDraw.setMode(kind === 'point' ? POINT_MODE : LINESTRING_MODE)
+    setIsDrawing(false)
+    setFeatureMode(kind)
+  }
+
+  // Abandon an in-progress point or line before it is finished. A point never reaches
+  // this state (one tap completes it), so in practice this backs out of a part-drawn line.
+  function handleCancelFeatureMode() {
+    draw.current?.setMode(STATIC_MODE)
+    setFeatureMode(null)
+  }
+
+  // Same key the polygon finish control dispatches, for the same reason — Terra Draw has
+  // no public finish() and the adapter listens on the canvas.
+  function handleFinishLine() {
+    const canvas = map.current?.getCanvas()
+    canvas?.dispatchEvent(new KeyboardEvent('keyup', { key: FINISH_KEY, bubbles: true }))
+  }
+
+  // Drop an unsaved point/line session, taking its geometry out of Terra Draw's store.
+  function clearMapFeatureSession() {
+    const drawId = pendingMapFeatureRef.current?.drawId
+    if (drawId) draw.current?.removeFeatures([drawId])
+    draw.current?.setMode(STATIC_MODE)
+  }
+
   // Brush mode needs no Terra Draw — it never puts a feature in that store — so unlike
   // handleStartDrawing it does not wait on the import. It does stand Terra Draw down, so
   // a half-finished polygon cannot keep taking taps underneath the brush.
   function handleStartBrush() {
-    if (pendingFeature || editingArea) return
+    if (pendingFeature || editingArea || pendingMapFeature || editingMapFeature) return
+    if (featureMode !== null) return
     draw.current?.setMode(STATIC_MODE)
     setIsDrawing(false)
     setBrushNotice(null)
@@ -825,6 +1140,14 @@ export default function MapShell() {
   // Abandon an edit session. `areas` was never mutated while it was open, so simply
   // dropping the session re-renders the area with its original, untouched geometry.
   function handleCancelEdit() {
+    if (editingMapFeature) {
+      // Nothing was loaded into Terra Draw for a feature edit, so there is nothing to
+      // take back out — dropping the session is the whole of it.
+      setEditingMapFeature(null)
+      setModalVisible(false)
+      setSaveError(null)
+      return
+    }
     if (!editingArea) return
     clearDrawSession(editingArea.drawId)
     setEditingArea(null)
@@ -836,7 +1159,105 @@ export default function MapShell() {
     setModalVisible(true)
   }
 
+  // Points and lines save through save-feature, not save-area. Kept as its own function
+  // rather than more branches inside handleSave: the two write paths share only the
+  // rating sheet, and interleaving them would put four session types through one set of
+  // nested ternaries.
+  async function handleSaveMapFeature(rating: number, comment: string) {
+    if (!session) {
+      setSaveError('Sign in (top right) to save this feature')
+      return
+    }
+    const target = pendingMapFeature
+      ? {
+          isNew: true,
+          id: crypto.randomUUID(),
+          kind: pendingMapFeature.kind,
+          geometry: pendingMapFeature.geometry,
+        }
+      : editingMapFeature
+        ? {
+            isNew: false,
+            id: editingMapFeature.id,
+            kind: editingMapFeature.kind,
+            geometry: editingMapFeature.geometry,
+          }
+        : null
+    if (!target) return
+
+    setSaving(true)
+    setSaveError(null)
+    const input = {
+      id: target.id,
+      geom: target.geometry,
+      kind: target.kind,
+      rating,
+      comment: comment || null,
+    }
+
+    const settle = () => {
+      clearMapFeatureSession()
+      setPendingMapFeature(null)
+      setEditingMapFeature(null)
+      setModalVisible(false)
+    }
+
+    try {
+      const { feature } = await saveFeature(input)
+      setMapFeatures((prev) => {
+        const next: MapFeature = {
+          type: 'Feature',
+          geometry: target.geometry,
+          properties: {
+            id: feature.id,
+            kind: target.kind,
+            rating: feature.rating,
+            comment: feature.comment,
+            created_at: feature.created_at,
+          },
+        }
+        return target.isNew
+          ? [...prev, next]
+          : prev.map((f) => (f.properties.id === target.id ? next : f))
+      })
+      settle()
+    } catch (err) {
+      // Same rule areas follow: only a genuine "could not reach the server" is queueable.
+      // Anything else would fail identically on flush, so it has to surface now.
+      if (err instanceof OfflineWriteError) {
+        const entry: QueuedFeatureWrite = { ...input, queuedAt: Date.now() }
+        await enqueueFeatureWrite(entry)
+        setQueuedMapFeatures((prev) => [...prev.filter((q) => q.id !== entry.id), entry])
+        settle()
+      } else {
+        setSaveError(err instanceof Error ? err.message : 'Save failed')
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDeleteMapFeature() {
+    if (!editingMapFeature) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await deleteFeature(editingMapFeature.id)
+      setMapFeatures((prev) => prev.filter((f) => f.properties.id !== editingMapFeature.id))
+      setEditingMapFeature(null)
+      setModalVisible(false)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Delete failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function handleSave(rating: number, comment: string) {
+    if (pendingMapFeature || editingMapFeature) {
+      await handleSaveMapFeature(rating, comment)
+      return
+    }
     if (!session) {
       setSaveError('Sign in (top right) to save this area')
       return
@@ -955,10 +1376,16 @@ export default function MapShell() {
     setLastSavedId(null)
   }
 
-  const showRatingModal = modalVisible && (pendingFeature !== null || editingArea !== null)
+  const hasSession =
+    pendingFeature !== null ||
+    editingArea !== null ||
+    pendingMapFeature !== null ||
+    editingMapFeature !== null
+  const isCreating = pendingFeature !== null || pendingMapFeature !== null
+  const showRatingModal = modalVisible && hasSession
   // A dismissed sheet is how the user reaches the vertex handles, so the pill stands in
   // for it during an edit session too, not just for a pending draw.
-  const showReopenPill = (pendingFeature !== null || editingArea !== null) && !modalVisible
+  const showReopenPill = hasSession && !modalVisible
 
   return (
     <div className="relative h-full w-full">
@@ -1025,7 +1452,7 @@ export default function MapShell() {
           </button>
         )}
 
-        {editingArea && !modalVisible && (
+        {(editingArea || editingMapFeature) && !modalVisible && (
           <button
             type="button"
             data-testid="cancel-edit"
@@ -1101,6 +1528,56 @@ export default function MapShell() {
           </div>
         )}
 
+        {/* Placing a point: one tap finishes it, so there is nothing to undo or close —
+            only a way back out. */}
+        {featureMode === 'point' && (
+          <div className="flex items-center gap-2">
+            <span
+              data-testid="point-hint"
+              className="rounded-full bg-white/90 px-3 py-2 text-sm text-gray-700 shadow"
+            >
+              Tap the map to place a point
+            </span>
+            <button
+              type="button"
+              data-testid="cancel-feature"
+              onClick={handleCancelFeatureMode}
+              className="flex min-h-11 items-center justify-center rounded-full bg-white px-4 text-sm font-medium text-gray-700 shadow"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {featureMode === 'line' && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="undo-vertex"
+              onClick={handleUndoVertex}
+              className="flex min-h-11 items-center justify-center rounded-full bg-white px-4 text-sm font-medium text-gray-900 shadow"
+            >
+              Undo point
+            </button>
+            <button
+              type="button"
+              data-testid="finish-line"
+              onClick={handleFinishLine}
+              className="flex min-h-11 items-center justify-center rounded-full bg-gray-900 px-4 text-sm font-medium text-white shadow"
+            >
+              Finish line
+            </button>
+            <button
+              type="button"
+              data-testid="cancel-feature"
+              onClick={handleCancelFeatureMode}
+              className="flex min-h-11 items-center justify-center rounded-full bg-white px-4 text-sm font-medium text-gray-700 shadow"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
         {isDrawing ? (
           <div className="flex items-center gap-2">
             <button
@@ -1121,10 +1598,11 @@ export default function MapShell() {
             </button>
           </div>
         ) : (
-          !pendingFeature &&
-          !editingArea &&
-          !brushing && (
-            <div className="flex items-center gap-2">
+          !hasSession &&
+          !brushing &&
+          featureMode === null && (
+            // Four entry points at 390px: two rows rather than one scrolling line.
+            <div className="flex flex-wrap items-center justify-center gap-2">
               <button
                 type="button"
                 data-testid="start-drawing"
@@ -1141,21 +1619,46 @@ export default function MapShell() {
               >
                 Paint area
               </button>
+              <button
+                type="button"
+                data-testid="start-point"
+                onClick={() => void handleStartFeature('point')}
+                className="flex min-h-11 items-center justify-center rounded-full bg-white px-5 text-base font-medium text-gray-900 shadow"
+              >
+                Add point
+              </button>
+              <button
+                type="button"
+                data-testid="start-line"
+                onClick={() => void handleStartFeature('line')}
+                className="flex min-h-11 items-center justify-center rounded-full bg-white px-5 text-base font-medium text-gray-900 shadow"
+              >
+                Draw line
+              </button>
             </div>
           )
         )}
       </div>
 
       {showRatingModal && (
+        // Reused unchanged across all four session types (G9 task 2): an area, a brushed
+        // area, a point and a line are all rated with the same three buttons and the same
+        // comment box.
         <RatingModal
-          mode={pendingFeature ? 'create' : 'edit'}
-          initialRating={editingArea?.rating ?? 0}
-          initialComment={editingArea?.comment ?? ''}
+          mode={isCreating ? 'create' : 'edit'}
+          initialRating={editingArea?.rating ?? editingMapFeature?.rating ?? 0}
+          initialComment={editingArea?.comment ?? editingMapFeature?.comment ?? ''}
           saving={saving}
           error={saveError}
           onDismiss={handleDismissModal}
           onSave={(rating, comment) => void handleSave(rating, comment)}
-          onDelete={editingArea ? () => void handleDelete() : undefined}
+          onDelete={
+            editingArea
+              ? () => void handleDelete()
+              : editingMapFeature
+                ? () => void handleDeleteMapFeature()
+                : undefined
+          }
         />
       )}
     </div>
