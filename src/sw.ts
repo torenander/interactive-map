@@ -126,6 +126,32 @@ registerRoute(
   },
 )
 
+// ---------------------------------------------------------------------------
+// Open-data overlays (G10): same posture as the basemap — cache-first, served
+// from this origin, usable with no connectivity once they have been fetched
+// once. They are deliberately *not* precached: the three files together are
+// several megabytes, all three are off by default, and precaching them would
+// make every install pay for data most sessions never turn on.
+//
+// CacheFirst rather than the hand-rolled handler the tiles need: these are
+// whole-file GETs with no Range header, so Workbox's strategy is exactly right.
+// The expiration plugin caps the cache rather than the age — an overlay a user
+// keeps switched on should not stop working offline because a month passed,
+// but a registry that grows should not grow the cache without limit either.
+registerRoute(
+  ({ url, request }) =>
+    request.method === 'GET' &&
+    url.origin === self.location.origin &&
+    url.pathname.startsWith('/overlays/'),
+  new CacheFirst({
+    cacheName: 'overlays-v1',
+    plugins: [
+      new CacheableResponsePlugin({ statuses: [0, 200] }),
+      new ExpirationPlugin({ maxEntries: 12 }),
+    ],
+  }),
+)
+
 // Opt-in whole-archive prefetch. Nothing calls this automatically — that is
 // the point of G7 — but a client can post
 // `{ type: 'prefetch-tiles', url }` to pull the entire archive down for a

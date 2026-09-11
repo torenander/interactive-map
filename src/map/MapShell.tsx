@@ -12,6 +12,28 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { Protocol } from 'pmtiles'
 import type { SnapToCustom, TerraDraw } from 'terra-draw'
 import { buildStyle, LONDON_CENTER, LONDON_ZOOM } from './style'
+// Source and layer ids, and the rule that overlays sit below every annotation layer,
+// live in ./layers so this file and ./overlays cannot drift apart on them.
+import {
+  BRUSH_FILL_LAYER,
+  BRUSH_LINE_LAYER,
+  BRUSH_SOURCE,
+  SAVED_AREAS_FILL_LAYER,
+  SAVED_AREAS_LINE_LAYER,
+  SAVED_AREAS_SOURCE,
+  SAVED_FEATURES_CIRCLE_LAYER,
+  SAVED_FEATURES_LINE_LAYER,
+  SAVED_FEATURES_SOURCE,
+} from './layers'
+import {
+  OVERLAYS,
+  loadEnabledOverlays,
+  overlayAddPlan,
+  overlayLayerIds,
+  overlaySourceId,
+  saveEnabledOverlays,
+  type OverlayId,
+} from './overlays'
 import { nearestVertexWithin } from './snapping'
 import {
   MAX_SELECTION_CELLS,
@@ -95,28 +117,9 @@ async function resolveWorkerUrl(originalUrl: string): Promise<string> {
 }
 setWorkerUrl(await resolveWorkerUrl(workerUrl))
 
-const SAVED_AREAS_SOURCE = 'saved-areas'
-const SAVED_AREAS_FILL_LAYER = 'saved-areas-fill'
-const SAVED_AREAS_LINE_LAYER = 'saved-areas-line'
-
-// The brush's in-progress paint gets its own source and its own colours, deliberately
-// not the rating palette: a selection that has not been rated or saved must never read
-// as a saved area (G8's done_when asserts exactly that). Added after the saved-area
-// layers, so paint sits on top of what is already on the map.
-const BRUSH_SOURCE = 'brush-selection'
-const BRUSH_FILL_LAYER = 'brush-selection-fill'
-const BRUSH_LINE_LAYER = 'brush-selection-line'
-
 
 // Terra Draw's own name for the select mode, and the mode name carried in the
 // `properties.mode` of every feature we hand it.
-// Points and lines (G9). Their own source and layers, above the area fills: a point
-// dropped inside a rated area has to stay tappable, which it cannot be if a large
-// translucent polygon is painted over it.
-const SAVED_FEATURES_SOURCE = 'saved-features'
-const SAVED_FEATURES_LINE_LAYER = 'saved-features-line'
-const SAVED_FEATURES_CIRCLE_LAYER = 'saved-features-circle'
-
 const SELECT_MODE = 'select'
 const POLYGON_MODE = 'polygon'
 const POINT_MODE = 'point'
@@ -326,6 +329,14 @@ export default function MapShell() {
   const brushModeRef = useRef<BrushMode>(brushMode)
   brushModeRef.current = brushMode
   const [brushNotice, setBrushNotice] = useState<string | null>(null)
+
+  // Overlays. Read from localStorage during the first render rather than in an effect:
+  // the choice is two or three ids, and loading it late would paint the map once without
+  // the layers the user left on and then again with them.
+  const [enabledOverlays, setEnabledOverlays] = useState<OverlayId[]>(() =>
+    loadEnabledOverlays(typeof window === 'undefined' ? undefined : window.localStorage),
+  )
+  const [overlaySheetOpen, setOverlaySheetOpen] = useState(false)
   // Read by the saved-area click handler, which is registered once on load.
   const brushingRef = useRef(false)
   brushingRef.current = brushing
@@ -852,6 +863,49 @@ export default function MapShell() {
     })
   }, [mapReady, brushSelection])
 
+  // Add and remove overlay sources and layers to match the toggles, and remember the
+  // choice. MapLibre is told each source's attribution, so its own attribution control
+  // renders it beside the OpenStreetMap line for exactly as long as the overlay is on —
+  // one mechanism for both, rather than a second attribution widget that could disagree
+  // with what is actually drawn.
+  useEffect(() => {
+    if (!mapReady) return
+    const instance = map.current
+    if (!instance) return
+
+    const on = new Set(enabledOverlays)
+
+    for (const overlay of OVERLAYS) {
+      const sourceId = overlaySourceId(overlay)
+      const present = !!instance.getSource(sourceId)
+
+      if (on.has(overlay.id) && !present) {
+        instance.addSource(sourceId, {
+          type: 'geojson',
+          data: overlay.source,
+          attribution: overlay.attribution,
+        })
+        for (const plan of overlayAddPlan(overlay)) {
+          // beforeId is the first annotation layer, so the overlay lands above the
+          // basemap and below every rated area, painted selection, point and line.
+          instance.addLayer(
+            { ...plan.spec, id: plan.layerId, source: plan.sourceId } as never,
+            instance.getLayer(plan.beforeId) ? plan.beforeId : undefined,
+          )
+        }
+      }
+
+      if (!on.has(overlay.id) && present) {
+        for (const layerId of overlayLayerIds(overlay)) {
+          if (instance.getLayer(layerId)) instance.removeLayer(layerId)
+        }
+        instance.removeSource(sourceId)
+      }
+    }
+
+    saveEnabledOverlays(typeof window === 'undefined' ? undefined : window.localStorage, enabledOverlays)
+  }, [mapReady, enabledOverlays])
+
   // Pointer handling for the brush. Registered only while brush mode is active, so
   // nothing here can interfere with Terra Draw's own pointer handling the rest of the
   // time — the two never listen at once.
@@ -1075,6 +1129,12 @@ export default function MapShell() {
     setIsDrawing(false)
     setBrushNotice(null)
     setBrushing(true)
+  }
+
+  function toggleOverlay(id: OverlayId) {
+    setEnabledOverlays((prev) =>
+      prev.includes(id) ? prev.filter((other) => other !== id) : [...prev, id],
+    )
   }
 
   function resetBrush() {
@@ -1463,6 +1523,35 @@ export default function MapShell() {
           </button>
         )}
 
+        {overlaySheetOpen && (
+          <div
+            data-testid="overlay-sheet"
+            className="w-full max-w-sm rounded-2xl bg-white p-3 shadow-lg"
+          >
+            <p className="mb-2 text-xs font-medium text-gray-500">Reference layers</p>
+            <div className="flex flex-col gap-1">
+              {OVERLAYS.map((overlay) => {
+                const on = enabledOverlays.includes(overlay.id)
+                return (
+                  <button
+                    key={overlay.id}
+                    type="button"
+                    data-testid={`overlay-toggle-${overlay.id}`}
+                    aria-pressed={on}
+                    onClick={() => toggleOverlay(overlay.id)}
+                    className={`flex min-h-11 items-center justify-between gap-3 rounded-xl px-3 text-sm font-medium ${
+                      on ? 'bg-blue-50 text-blue-800' : 'text-gray-900'
+                    }`}
+                  >
+                    <span>{overlay.label}</span>
+                    <span className="text-xs text-gray-500">{on ? 'On' : 'Off'}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Sits with the brush controls rather than in the top band: it is about the
             stroke that just happened, and the rating sheet covers the top of the screen.
             The cap message wins over the disconnected one — at the cap, painting the gap
@@ -1618,6 +1707,18 @@ export default function MapShell() {
                 className="rounded-full bg-blue-600 px-5 py-3 text-base font-medium text-white shadow"
               >
                 Paint area
+              </button>
+              <button
+                type="button"
+                data-testid="overlay-sheet-toggle"
+                aria-pressed={overlaySheetOpen}
+                onClick={() => setOverlaySheetOpen((open) => !open)}
+                className="flex min-h-11 items-center justify-center rounded-full bg-white px-4 text-sm font-medium text-gray-900 shadow"
+              >
+                Layers
+                {enabledOverlays.length > 0 && (
+                  <span className="ml-1 text-xs text-blue-700">{enabledOverlays.length}</span>
+                )}
               </button>
               <button
                 type="button"
