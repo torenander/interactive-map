@@ -972,3 +972,14 @@ Three things worth surfacing here:
   with its attribution, so `overlays.spec.ts` tolerates exactly those two messages and
   fails on any other page error. Serving the worker from a real same-origin URL is the
   real fix — G5/G7-shaped follow-up, not part of this goal.
+
+---
+
+# G11 — Desktop — planned, not started
+
+Goal block: `docs/OBJECTIVES.md` § G11. Task breakdown: `docs/TASKS-G11.md` (blocked by
+G6), drafted from two measured recon passes rather than from assumption.
+
+No task in that file has been started; every box is `[ ]`. Implementation should follow
+the e2e flakiness fix — the suite is already intermittent under parallel load, and G11
+adds a second Playwright project to that contention.

@@ -279,6 +279,57 @@ G5, G9.
 
 ---
 
+## G11 — Desktop
+
+**objective**
+The app is usable with a mouse and keyboard at 1440x900: no unrecoverable state, no
+surface stretched across the window, and hover tells you what is clickable. Mobile stays
+the primary target — every existing 390x844 gate keeps passing unchanged, and the desktop
+work is additive rather than a breakpoint fork.
+
+**done_when**
+```
+npm run build
+npm run test
+npm run test:e2e -- --project=mobile
+npm run test:e2e -- --project=desktop
+grep -q "dragRotate.disable()" src/map/MapShell.tsx
+grep -q "touchPitch.disable()" src/map/MapShell.tsx
+grep -q 'data-testid="cancel-drawing"' src/map/MapShell.tsx
+grep -q "Escape" src/areas/RatingModal.tsx
+! grep -q "844 \* (2 / 3)" tests/e2e/map-shell.spec.ts
+```
+`--project=mobile` is the whole existing suite, 27 tests, green with no edits to its
+assertions — the "mobile first, not mobile only" check.
+`--project=desktop` is new (Chromium, 1440x900, `hasTouch: false`) and today exits 1 with
+`Project(s) "desktop" not found`. It runs `tests/e2e/desktop.spec.ts` plus the suites that
+are viewport-agnostic once input is abstracted: `map-shell`, `mvp-loop`, `offline`,
+`offline-map`, `perf-load`, `points-lines`, `draw-precision`, `brush`, `overlays`.
+`desktop.spec.ts` asserts: Escape during a polygon draw leaves no drawing controls on
+screen and a fresh draw still works; `cancel-drawing` ends a session the same way; a
+right-drag leaves `getBearing()` and `getPitch()` at 0; the rating sheet and queued banner
+are each no wider than 640 px at 1440x900; Escape closes the sheet, focus lands inside it
+on open, and Tab from the last control stays inside; and the cursor over a saved area,
+line and point is `pointer`, not `grab`.
+All five grep probes fail today — none of those strings exist — and pin the behaviours
+with no cheaper assertion.
+
+**out_of_scope**
+PWA work — `scripts/assert-pwa.mjs` already runs a plain desktop Chromium context and
+passes 10/10, so desktop install is verified, not missing; the wide-form-factor
+`screenshots` entry is cosmetic and stays out. A compass or reset-north control: rotation
+is removed rather than made recoverable. Keyboard-complete drawing (placing vertices
+without a pointer). Breakpoint forks or a separate desktop layout. Moving the control
+cluster off the bottom band. Mouse paths for `touch-draw.spec.ts` — it exists to
+reproduce a WebKit touch race and is mobile-only by design. The parallel-run flakiness
+(task #22). Tightening `perf-load`'s cache bound, which the recon measured at 3.8x mobile
+usage at 2560x1440 and must not drop below ~4 MB without re-measuring there.
+
+**blocked_by**
+G6.
+
+---
+
 ## Not goals
 
 Do not start these without a new block in this file:
