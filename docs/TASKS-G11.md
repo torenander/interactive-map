@@ -114,12 +114,25 @@ correction touches. Box 8's `Enter` finding is likewise a measurement, not a ded
 
 ---
 
-## Frozen for revalidation
+## Frozen for revalidation, and the sequence out of it
 
-`src/*` is frozen at cb80aaf — draw-accuracy has committed to announcing before touching
-it again, so perf-probe's determinism measurement has a still tree underneath it. The
-eight `[~]` boxes above should therefore reproduce exactly against that commit; if one
-does not, that is a real difference rather than the tree having moved under the run.
+`src/*` is frozen at cb80aaf — draw-accuracy announces before touching it — so
+perf-probe's determinism measurement has a still tree underneath it. The eight `[~]`
+boxes should reproduce exactly against that commit; if one does not, that is a real
+difference rather than the tree having moved under the run.
+
+The lead's sequence out of the freeze, in order:
+
+1. perf-probe's full `done_when` run completes against the current tree.
+2. draw-accuracy gets a one-commit unfreeze to rewrite the comment at
+   `src/areas/RatingModal.tsx:64` so it carries **only** the mechanism rationale —
+   `focus()` scrolls, the sheet sits at the bottom of the viewport, a modal must not move
+   the map under the pointer. Per the house comment rule: state the constraint the code
+   cannot show, no causal war story and no bisection narrative. The retraction stays here,
+   in the ledger, which is the correction of record.
+3. The lead's independent validation runs against that final sha. A comment-only delta
+   does not invalidate perf-probe's behavioural results, and the lead's run is the
+   authoritative one regardless.
 
 ## Note for whoever reconciles run logs against this file
 
