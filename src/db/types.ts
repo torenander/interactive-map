@@ -93,6 +93,42 @@ export type Database = {
         }
         Relationships: []
       }
+      map_features: {
+        Row: {
+          comment: string | null
+          created_at: string
+          dimension: string
+          geom: unknown
+          id: string
+          kind: string
+          rating: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          comment?: string | null
+          created_at?: string
+          dimension?: string
+          geom: unknown
+          id?: string
+          kind: string
+          rating: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          comment?: string | null
+          created_at?: string
+          dimension?: string
+          geom?: unknown
+          id?: string
+          kind?: string
+          rating?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       spatial_ref_sys: {
         Row: {
           auth_name: string | null
@@ -485,6 +521,32 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "areas"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      save_feature_tx: {
+        Args: {
+          p_comment: string
+          p_geom_geojson: Json
+          p_id: string
+          p_kind: string
+          p_rating: number
+        }
+        Returns: {
+          comment: string | null
+          created_at: string
+          dimension: string
+          geom: unknown
+          id: string
+          kind: string
+          rating: number
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "map_features"
           isOneToOne: true
           isSetofReturn: false
         }
