@@ -62,6 +62,8 @@ export type PolygonResult =
   | { ok: true; polygon: { type: "Polygon"; coordinates: number[][][] } }
   | { ok: false; reason: "empty" | "disconnected" }
 
+export type Pixel = { x: number; y: number }
+
 export function emptySelection(): BrushSelection {
   return { cells: new Set(), strokes: [], current: null, refusedAtCap: false }
 }
@@ -195,4 +197,78 @@ export function selectionToPolygon(selection: BrushSelection): PolygonResult {
   if (groups.length !== 1) return { ok: false, reason: "disconnected" }
 
   return { ok: true, polygon: { type: "Polygon", coordinates: groups[0] } }
+}
+
+/**
+ * The geometry to render a selection with while it is being painted.
+ *
+ * A `MultiPolygon` rather than the `Polygon` a save needs, because painting has to stay
+ * visible in states no single polygon can hold: mid-stroke the cells are often still in
+ * two clumps, and `selectionToPolygon` refuses exactly that. Showing the clumps is how
+ * the user sees what to join up after the "paint a connected shape" message.
+ */
+export function selectionToRenderGeometry(selection: BrushSelection): {
+  type: "MultiPolygon"
+  coordinates: number[][][][]
+} {
+  const cells = selectionCells(selection)
+  return {
+    type: "MultiPolygon",
+    coordinates: cells.length === 0 ? [] : cellsToMultiPolygon(cells, true),
+  }
+}
+
+/**
+ * The pointer positions to stamp for a move from `from` to `to`, `to` included.
+ *
+ * Pointer-move events arrive at whatever rate the device manages, and a finger moving
+ * fast across the screen can jump further than a cell between two of them. Stamping only
+ * the reported positions would leave gaps in the middle of one continuous drag, which
+ * `selectionToPolygon` then rejects as disconnected — the brush would refuse to save a
+ * shape the user painted in one unbroken movement. Subdividing the jump into steps no
+ * longer than `maxStep` pixels closes those gaps.
+ *
+ * Pixels, not lat/lng: a constant on-screen step covers the same fraction of a cell at
+ * every zoom level, which a constant angular step does not. The caller unprojects each
+ * point. Same reasoning as the pixel maths in src/map/snapping.ts.
+ */
+export function pixelPath(from: Pixel, to: Pixel, maxStep: number): Pixel[] {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / maxStep))
+
+  const path: Pixel[] = []
+  for (let i = 1; i <= steps; i++) {
+    // The last point is `to` itself, not a rounded interpolation of it: the cell under
+    // the pointer when it stopped is the one the user meant to paint.
+    path.push(i === steps ? to : { x: from.x + (dx * i) / steps, y: from.y + (dy * i) / steps })
+  }
+  return path
+}
+
+/** Ground distance between two stamps of one stroke. Under half the ~130 m width of a
+ *  res-10 cell, so consecutive stamps always overlap. */
+const STEP_METRES = 60
+
+/** Bounds on the pixel step: never zero (which would not advance), and never so coarse
+ *  that it reintroduces gaps at the zooms people actually paint at. */
+const MIN_STEP_PIXELS = 1
+const MAX_STEP_PIXELS = 24
+
+/**
+ * The pixel step `pixelPath` should use at this zoom and latitude.
+ *
+ * A fixed pixel step cannot work: the app opens at z11, where a res-10 cell is about
+ * five pixels across, so stamps 20 px apart land several cells apart and one continuous
+ * drag comes out in pieces (reproduced end to end before this existed). At z14 the same
+ * 20 px is a sensible half-cell. Converting a fixed *ground* distance into pixels makes
+ * the brush behave the same at every zoom.
+ *
+ * Web Mercator metres per pixel at 512 px tiles, which is what MapLibre uses.
+ */
+export function pixelStepFor(zoom: number, lat: number): number {
+  const metresPerPixel =
+    (40075016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * Math.pow(2, zoom))
+  const step = STEP_METRES / metresPerPixel
+  return Math.min(MAX_STEP_PIXELS, Math.max(MIN_STEP_PIXELS, step))
 }

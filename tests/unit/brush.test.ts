@@ -12,8 +12,11 @@ import {
   emptySelection,
   endStroke,
   extendStroke,
+  pixelPath,
+  pixelStepFor,
   selectionCells,
   selectionToPolygon,
+  selectionToRenderGeometry,
   stampCells,
   undoStroke,
 } from "../../src/map/brush";
@@ -310,5 +313,85 @@ describe("selectionToPolygon", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.polygon.coordinates).toHaveLength(2);
+  });
+});
+
+describe("selectionToRenderGeometry", () => {
+  it("is empty for an empty selection", () => {
+    expect(selectionToRenderGeometry(emptySelection())).toEqual({
+      type: "MultiPolygon",
+      coordinates: [],
+    });
+  });
+
+  it("renders a connected selection as one polygon", () => {
+    const geometry = selectionToRenderGeometry(paint([[LAT, LNG]], 2));
+    expect(geometry.type).toBe("MultiPolygon");
+    expect(geometry.coordinates).toHaveLength(1);
+    expect(geometry.coordinates[0][0]).toHaveLength(19);
+  });
+
+  it("still renders a disconnected selection, which selectionToPolygon refuses", () => {
+    // Painting has to stay visible while it is unsaveable — that is how the user sees
+    // what to fix after the "paint a connected shape" message.
+    const selection = paint([
+      [LAT, LNG],
+      [51.55, -0.05],
+    ]);
+    expect(selectionToRenderGeometry(selection).coordinates).toHaveLength(2);
+    expect(selectionToPolygon(selection).ok).toBe(false);
+  });
+});
+
+describe("pixelPath", () => {
+  it("is just the destination when the step is within range", () => {
+    expect(pixelPath({ x: 0, y: 0 }, { x: 3, y: 4 }, 10)).toEqual([{ x: 3, y: 4 }]);
+  });
+
+  it("subdivides a longer jump into steps no larger than the maximum", () => {
+    const path = pixelPath({ x: 0, y: 0 }, { x: 100, y: 0 }, 10);
+    expect(path).toHaveLength(10);
+    expect(path[0]).toEqual({ x: 10, y: 0 });
+    expect(path[path.length - 1]).toEqual({ x: 100, y: 0 });
+
+    let previous = { x: 0, y: 0 };
+    for (const point of path) {
+      expect(Math.hypot(point.x - previous.x, point.y - previous.y)).toBeLessThanOrEqual(10);
+      previous = point;
+    }
+  });
+
+  it("always ends exactly on the destination, never short of it", () => {
+    const path = pixelPath({ x: 0, y: 0 }, { x: 47, y: 13 }, 10);
+    expect(path[path.length - 1]).toEqual({ x: 47, y: 13 });
+  });
+
+  it("returns the destination for a pointer that did not move", () => {
+    expect(pixelPath({ x: 5, y: 5 }, { x: 5, y: 5 }, 10)).toEqual([{ x: 5, y: 5 }]);
+  });
+});
+
+describe("pixelStepFor", () => {
+  it("is about 20px at z14, where one res-10 cell spans ~44px", () => {
+    expect(pixelStepFor(14, 51.5)).toBeGreaterThan(18);
+    expect(pixelStepFor(14, 51.5)).toBeLessThan(22);
+  });
+
+  it("shrinks as the view zooms out, where a cell is only a few pixels", () => {
+    // The app opens at z11 (src/map/style.ts). A fixed 20px step there spans several
+    // cells, and a drag would come out in disconnected pieces — the defect this exists
+    // to prevent.
+    expect(pixelStepFor(11, 51.5)).toBeLessThan(4);
+    expect(pixelStepFor(11, 51.5)).toBeLessThan(pixelStepFor(14, 51.5));
+    expect(pixelStepFor(14, 51.5)).toBeLessThan(pixelStepFor(17, 51.5));
+  });
+
+  it("stays within bounds that keep one drag's work finite", () => {
+    expect(pixelStepFor(1, 51.5)).toBeGreaterThanOrEqual(1);
+    expect(pixelStepFor(22, 51.5)).toBeLessThanOrEqual(24);
+  });
+
+  it("accounts for latitude, since a pixel covers less ground further north", () => {
+    expect(pixelStepFor(14, 0)).toBeLessThan(pixelStepFor(14, 60));
   });
 });
