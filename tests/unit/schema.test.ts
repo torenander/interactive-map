@@ -269,3 +269,149 @@ describe("G2 schema constraints", () => {
     expect(seenByB).toEqual([]);
   });
 });
+
+// G9 (docs/OBJECTIVES.md § G9 done_when) — the map_features half of the schema. A
+// separate block with its own users rather than additions to the G2 one above: the
+// cascade test has to delete a user to observe the FK, which would take the shared
+// fixtures down with it.
+//
+// Features are created through `save-feature`, the sole write path — migration 0009
+// revokes INSERT/UPDATE from the client roles, so there is no direct-write alternative.
+// The one direct write here is by the service role, which keeps its grants, and it is
+// there to prove a database constraint rather than app-level validation.
+describe("G9 map_features schema constraints", () => {
+  let admin: SupabaseClient<Database>;
+  let apiUrl: string;
+  let anonKey: string;
+  let userA: { id: string; client: SupabaseClient<Database> };
+  let userB: { id: string; client: SupabaseClient<Database> };
+  const password = "correct-horse-battery-staple";
+  const createdUserIds: string[] = [];
+
+  async function createUser(label: string) {
+    const email = `schema-feature-${label}-${randomUUID()}@example.com`;
+    const { data: created, error } = await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+    });
+    if (error || !created.user) throw error ?? new Error(`user ${label} not created`);
+    createdUserIds.push(created.user.id);
+    const client = createClient<Database>(apiUrl, anonKey);
+    const { error: signInError } = await client.auth.signInWithPassword({ email, password });
+    if (signInError) throw signInError;
+    return { id: created.user.id, client };
+  }
+
+  async function saveFeature(
+    client: SupabaseClient<Database>,
+    input: {
+      id: string;
+      geom: { type: string; coordinates: unknown };
+      kind: "point" | "line";
+      rating: number;
+      comment?: string | null;
+    },
+  ) {
+    const { error } = await client.functions.invoke("save-feature", { body: input });
+    if (error) throw error;
+  }
+
+  function pointAt(lngOffset: number) {
+    return { type: "Point", coordinates: [-0.1276 + lngOffset, 51.5072] };
+  }
+
+  beforeAll(async () => {
+    const env = readLocalSupabaseEnv();
+    apiUrl = env.API_URL ?? env.SUPABASE_URL;
+    anonKey = env.ANON_KEY;
+    admin = createClient<Database>(apiUrl, env.SERVICE_ROLE_KEY);
+    userA = await createUser("a");
+    userB = await createUser("b");
+  });
+
+  afterAll(async () => {
+    for (const id of createdUserIds) {
+      await admin.auth.admin.deleteUser(id);
+    }
+  });
+
+  it("deleting a user cascades to their features", async () => {
+    // A user of its own, because observing the cascade means destroying the owner.
+    const doomed = await createUser("doomed");
+    const id = randomUUID();
+    await saveFeature(doomed.client, { id, geom: pointAt(0.01), kind: "point", rating: 1 });
+
+    const { data: before } = await admin.from("map_features").select("id").eq("id", id);
+    expect(before).toHaveLength(1);
+
+    const { error: deleteError } = await admin.auth.admin.deleteUser(doomed.id);
+    expect(deleteError).toBeNull();
+
+    const { data: after, error: afterError } = await admin
+      .from("map_features")
+      .select("id")
+      .eq("id", id);
+    expect(afterError).toBeNull();
+    expect(after).toEqual([]);
+  });
+
+  it("a second user's select on another user's feature returns zero rows", async () => {
+    const id = randomUUID();
+    await saveFeature(userA.client, { id, geom: pointAt(0.02), kind: "point", rating: 1 });
+
+    const { data: seenByB, error } = await userB.client
+      .from("map_features")
+      .select("*")
+      .eq("id", id);
+    expect(error).toBeNull();
+    expect(seenByB).toEqual([]);
+
+    // The owner still sees it, so this is RLS scoping the read and not an empty table.
+    const { data: seenByA } = await userA.client.from("map_features").select("id").eq("id", id);
+    expect(seenByA).toHaveLength(1);
+  });
+
+  it("no map_features row can have dimension other than 'overall'", async () => {
+    const id = randomUUID();
+    await saveFeature(userA.client, { id, geom: pointAt(0.03), kind: "point", rating: 0 });
+    const { data: saved } = await admin.from("map_features").select("dimension").eq("id", id);
+    expect(saved?.[0].dimension).toBe("overall");
+
+    // The constraint, not the write path's habit: the service role holds INSERT and is
+    // still refused. CLAUDE.md pins dimension to 'overall'; migration 0008 makes that real.
+    const { error } = await admin.from("map_features").insert({
+      id: randomUUID(),
+      user_id: userA.id,
+      geom: "SRID=4326;POINT(-0.1276 51.5072)",
+      kind: "point",
+      dimension: "noise",
+      rating: 1,
+    } as never);
+    expect(error).not.toBeNull();
+    expect(error?.message).toMatch(/dimension|violates check constraint/i);
+
+    // And nothing in the table got past it.
+    const { data: offending } = await admin
+      .from("map_features")
+      .select("id")
+      .neq("dimension", "overall");
+    expect(offending).toEqual([]);
+  });
+
+  it("kind cannot disagree with the stored geometry", async () => {
+    // save-feature returns 422 for this (tests/unit/save-feature.test.ts), but the
+    // guarantee has to hold at the table too — otherwise the service role, or any future
+    // write path, could produce a 'point' row holding a LINESTRING that the map cannot
+    // draw. This is map_features_geom_matches_kind from migration 0008.
+    const { error } = await admin.from("map_features").insert({
+      id: randomUUID(),
+      user_id: userA.id,
+      geom: "SRID=4326;LINESTRING(-0.1276 51.5072, -0.1266 51.5082)",
+      kind: "point",
+      rating: 1,
+    } as never);
+    expect(error).not.toBeNull();
+    expect(error?.message).toMatch(/geom_matches_kind|violates check constraint/i);
+  });
+});
