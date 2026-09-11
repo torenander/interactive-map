@@ -257,6 +257,10 @@ function combineFeatures(synced: AreaFeature[], queued: QueuedWrite[]): RenderFe
   return [...syncedVisible, ...queued.map(queuedToRenderFeature)]
 }
 
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count > 1 ? 's' : ''}`
+}
+
 function queuedToRenderMapFeature(entry: QueuedFeatureWrite): RenderMapFeature {
   return {
     type: 'Feature',
@@ -1436,6 +1440,19 @@ export default function MapShell() {
     setLastSavedId(null)
   }
 
+  // The banner covers both queues. Every entry in either is a write the server has not
+  // confirmed — entries are removed only after a successful flush — so this count can
+  // never overstate what is saved (CLAUDE.md: never render a save as complete before the
+  // server has it). Naming the kinds separately rather than totalling them keeps
+  // "1 area queued" reading exactly as it did when areas were the only thing queueable.
+  const queuedTotal = queuedAreas.length + queuedMapFeatures.length
+  const queuedLabel = [
+    queuedAreas.length > 0 ? plural(queuedAreas.length, 'area') : null,
+    queuedMapFeatures.length > 0 ? plural(queuedMapFeatures.length, 'feature') : null,
+  ]
+    .filter(Boolean)
+    .join(' and ')
+
   const hasSession =
     pendingFeature !== null ||
     editingArea !== null ||
@@ -1456,15 +1473,12 @@ export default function MapShell() {
           <div className="rounded-lg bg-red-50 p-2 text-xs text-red-700 shadow">{loadError}</div>
         )}
 
-        {queuedAreas.length > 0 && (
+        {queuedTotal > 0 && (
           <div
             data-testid="queued-banner"
             className="flex items-center justify-between gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 shadow"
           >
-            <span>
-              {queuedAreas.length} area{queuedAreas.length > 1 ? 's' : ''} queued — offline, will
-              sync
-            </span>
+            <span>{queuedLabel} queued — offline, will sync</span>
             <button
               type="button"
               data-testid="flush-queue"

@@ -435,6 +435,13 @@ test('a point saved with the network blocked queues, renders as queued, then flu
   // than its rating colour.
   await expect.poll(() => queuedFeatureIds(page)).toHaveLength(1)
 
+  // And the banner says so. It counted queued *areas* only until this was fixed, so a
+  // user whose only queued write was a feature saw the amber point but no banner and no
+  // manual flush control at all — they were left depending on the `online` auto-flush.
+  await expect(page.getByTestId('queued-banner')).toBeVisible()
+  await expect(page.getByTestId('queued-banner')).toContainText('1 feature queued')
+  await expect(page.getByTestId('flush-queue')).toBeEnabled()
+
   // And nothing reached the database.
   const { data: beforeFlush } = await admin
     .from('map_features')
@@ -448,9 +455,21 @@ test('a point saved with the network blocked queues, renders as queued, then flu
   // that banner counts queued areas only — see the note in docs/TASKS-G9.md.
   await context.setOffline(false)
 
+  // Best-effort, exactly as offline.spec.ts does it: `setOffline(false)` fires `online`,
+  // which MapShell auto-flushes on, so the queue may already be empty (button gone) by
+  // the time this runs. Which of the two drained it is not distinguishable from here —
+  // what is asserted deterministically is that the control exists and is usable in the
+  // feature-only queued state, checked above while still offline.
+  try {
+    await page.getByTestId('flush-queue').tap({ timeout: 2_000 })
+  } catch {
+    // Already flushed by the `online` handler.
+  }
+
   // Load-bearing, proven by a red run: left offline, this poll fails with the point still
   // queued after the full 20s rather than passing vacuously.
   await expect.poll(() => queuedFeatureIds(page), { timeout: 20_000 }).toHaveLength(0)
+  await expect(page.getByTestId('queued-banner')).toBeHidden({ timeout: 15_000 })
 
   // Exactly one row, and it went through save-feature — a direct insert is revoked at the
   // database (migration 0009), so a row existing at all means the write path ran.
@@ -465,5 +484,53 @@ test('a point saved with the network blocked queues, renders as queued, then flu
   await waitForMap(page)
   await waitForRenderedFeatures(page, 1)
   expect(await queuedFeatureIds(page)).toHaveLength(0)
+  expect(await storedFeatures()).toHaveLength(1)
+})
+
+// The combined label is the only genuinely new branch in the banner, and the one the
+// other two suites cannot reach: offline.spec.ts only ever queues an area, and the test
+// above only ever queues a feature. Queue one of each and read what it says.
+test('the queued banner names both kinds when an area and a feature are queued together', async ({
+  page,
+  context,
+}) => {
+  await signIn(page)
+  await context.setOffline(true)
+
+  const origin = await canvasOrigin(page)
+  const cx = origin.x + origin.width / 2
+  const cy = origin.y + origin.height / 2
+
+  await page.getByTestId('start-drawing').tap()
+  for (const vertex of [
+    { x: cx - 90, y: cy - 100 },
+    { x: cx + 90, y: cy - 100 },
+    { x: cx + 90, y: cy - 20 },
+    { x: cx - 90, y: cy - 20 },
+  ]) {
+    await page.touchscreen.tap(vertex.x, vertex.y)
+  }
+  await page.getByTestId('finish-area').tap()
+  await rateAndSave(page, 1, 'area underground')
+
+  await expect(page.getByTestId('queued-banner')).toContainText('1 area queued')
+
+  await page.getByTestId('start-point').tap()
+  await page.touchscreen.tap(cx, cy + 40)
+  await rateAndSave(page, -1, 'point underground')
+
+  // Both kinds named, rather than totalled into a number that says neither.
+  await expect(page.getByTestId('queued-banner')).toContainText('1 area and 1 feature queued')
+
+  // Neither reached the server.
+  const { data: areasBefore } = await admin.from('areas').select('id').eq('user_id', userId)
+  expect(areasBefore).toEqual([])
+  expect(await storedFeatures()).toHaveLength(0)
+
+  // And both drain on reconnect, leaving one row in each table.
+  await context.setOffline(false)
+  await expect(page.getByTestId('queued-banner')).toBeHidden({ timeout: 20_000 })
+  const { data: areasAfter } = await admin.from('areas').select('id').eq('user_id', userId)
+  expect(areasAfter).toHaveLength(1)
   expect(await storedFeatures()).toHaveLength(1)
 })
