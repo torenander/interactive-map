@@ -185,6 +185,7 @@ rejection rather than a constraint violation.
   npx supabase gen types typescript --local > src/db/types.ts
   ```
 - **Polygons only for now.** Points and lines are planned but not in the MVP schema. When they arrive, decide then whether they join `areas` with a geometry-type column or get their own tables — do not pre-build it.
+  - **Decided 2026-09-11 (G9).** Their own table: `public.map_features`, migrations 0008 and 0009. `areas` is untouched. Joining them onto `areas` would have made every existing constraint, index and the whole `area_cells` derivation conditional on a kind column, for no gain — an area derives H3 cells, a point or line derives none. One table covers both kinds, with `kind` (`'point' | 'line'`) kept honest against `geometrytype(geom::geometry)` by a check constraint.
 
 ## Client-side write queue
 
@@ -199,20 +200,44 @@ Offline saves are held locally and flushed on reconnect.
 
 GeoJSON, so nothing is trapped in the hosted database:
 
+Both tables in one FeatureCollection, told apart by a `kind` property — `'area'` for a
+row from `areas`, and the row's own `'point'` / `'line'` for one from `map_features`. One
+file rather than two, because "nothing is trapped in the hosted database" means the
+export has to be everything the user drew, not everything they drew that happened to be
+a polygon.
+
 ```sql
 select json_build_object(
   'type', 'FeatureCollection',
-  'features', coalesce(json_agg(
-    json_build_object(
-      'type', 'Feature',
-      'geometry', st_asgeojson(geom)::json,
-      'properties', json_build_object(
-        'id', id, 'rating', rating, 'comment', comment,
-        'dimension', dimension, 'created_at', created_at
-      )
-    )
-  ), '[]'::json)
+  'features', coalesce(json_agg(feature), '[]'::json)
 )
-from public.areas
-where user_id = auth.uid();
+from (
+  select json_build_object(
+    'type', 'Feature',
+    'geometry', st_asgeojson(geom)::json,
+    'properties', json_build_object(
+      'id', id, 'kind', 'area', 'rating', rating, 'comment', comment,
+      'dimension', dimension, 'created_at', created_at
+    )
+  ) as feature
+  from public.areas
+  where user_id = auth.uid()
+
+  union all
+
+  select json_build_object(
+    'type', 'Feature',
+    'geometry', st_asgeojson(geom)::json,
+    'properties', json_build_object(
+      'id', id, 'kind', kind, 'rating', rating, 'comment', comment,
+      'dimension', dimension, 'created_at', created_at
+    )
+  )
+  from public.map_features
+  where user_id = auth.uid()
+) as both_tables;
 ```
+
+`area_cells` is deliberately not exported: it is derived from `areas.geom` and
+recomputable from it (docs/ARCHITECTURE.md § "Geometry model"), so shipping it would be
+shipping a cache.
