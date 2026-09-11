@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   GeolocateControl,
   MapLibreMap,
@@ -373,6 +373,17 @@ export default function MapShell() {
   pendingMapFeatureRef.current = pendingMapFeature
   const editingMapFeatureIdRef = useRef<string | null>(null)
   editingMapFeatureIdRef.current = editingMapFeature?.id ?? null
+  // The hover affordance is only correct when nothing else owns the pointer: Terra Draw
+  // and the brush set their own cursors, and overriding one mid-gesture would flicker.
+  const hoverIdleRef = useRef(true)
+  hoverIdleRef.current =
+    !brushing &&
+    !isDrawing &&
+    featureMode === null &&
+    pendingFeature === null &&
+    editingArea === null &&
+    pendingMapFeature === null &&
+    editingMapFeature === null
   const [modalVisible, setModalVisible] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -411,6 +422,17 @@ export default function MapShell() {
       attributionControl: { compact: false },
     })
     map.current = instance
+
+    // Desktop: a right-drag rotates and pitches a MapLibre map by default. Measured on a
+    // 1440x900 desktop context, one stray right-drag took bearing 0 -> -146.7 and pitch
+    // 0 -> 60, and nothing in this app can undo that — only GeolocateControl is
+    // registered below, so there is no compass and no reset-north. Removing the gesture
+    // beats adding a control to recover from it: nothing here benefits from a rotated or
+    // tilted map (north-up is what a neighbourhood rating is read against), and on touch
+    // it was only ever reachable by a deliberate two-finger gesture, so nobody loses a
+    // capability they were using.
+    instance.dragRotate.disable()
+    instance.touchPitch.disable()
 
     // Exposed for end-to-end tests. The DOM alone cannot distinguish a working
     // map from a blank canvas, and that gap already shipped one silent failure.
@@ -738,6 +760,26 @@ export default function MapShell() {
         setModalVisible(true)
       }
       instance.on('click', SAVED_AREAS_FILL_LAYER, handleAreaClick)
+
+      // Desktop discoverability: with a mouse, the cursor is the only thing that says a
+      // shape is interactive, and it read `grab` over saved areas, lines and points —
+      // identical to empty map. Point mode already sets `crosshair`, so the mechanism
+      // existed and simply was not wired for saved geometry. Touch has no hover, so
+      // nothing about the mobile target changes.
+      for (const layer of [
+        SAVED_AREAS_FILL_LAYER,
+        SAVED_FEATURES_CIRCLE_LAYER,
+        SAVED_FEATURES_LINE_LAYER,
+      ]) {
+        instance.on('mouseenter', layer, () => {
+          if (hoverIdleRef.current) instance.getCanvas().style.cursor = 'pointer'
+        })
+        instance.on('mouseleave', layer, () => {
+          // Empty string hands the cursor back to MapLibre's own class-based default
+          // rather than pinning it to whatever it happened to be.
+          if (hoverIdleRef.current) instance.getCanvas().style.cursor = ''
+        })
+      }
 
       setMapReady(true)
     }
@@ -1120,6 +1162,24 @@ export default function MapShell() {
     setFeatureMode(null)
   }
 
+  // Abandon an in-progress polygon. Terra Draw's own cancel key already empties its
+  // store, but it emits no event, so without this MapShell never learns and the controls
+  // keep offering to finish a ring that no longer exists.
+  function handleCancelDrawing() {
+    draw.current?.setMode(STATIC_MODE)
+    setIsDrawing(false)
+  }
+
+  // Mouse-clicking a button leaves it focused, and Enter then re-fires it. Measured: with
+  // "Undo point" focused, Enter deleted a second vertex instead of finishing the ring
+  // (ring length 5 -> 4), silently destroying work. Dropping focus after a MOUSE click
+  // sends the next Enter to the document handler below, which finishes as expected.
+  // `detail > 0` distinguishes a real click from a keyboard-activated one, so a keyboard
+  // user keeps focus where they put it.
+  function blurAfterMouseClick(event: ReactMouseEvent<HTMLButtonElement>) {
+    if (event.detail > 0) event.currentTarget.blur()
+  }
+
   // Same key the polygon finish control dispatches, for the same reason — Terra Draw has
   // no public finish() and the adapter listens on the canvas.
   function handleFinishLine() {
@@ -1496,6 +1556,41 @@ export default function MapShell() {
     .filter(Boolean)
     .join(' and ')
 
+  // Desktop keyboard. Terra Draw's adapter listens for keyup on the map canvas, so its
+  // finish/cancel keys only work while the canvas holds focus — which it does after a map
+  // click and does not after a toolbar click. Both keys are handled here at the document
+  // level instead, so they behave the same wherever focus happens to be.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      // Never steal a key from a field: Enter in the comment box is a newline, and the
+      // rating sheet handles its own Escape.
+      const target = event.target as HTMLElement | null
+      if (target?.isContentEditable) return
+      const tag = target?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (modalVisible) return
+
+      if (event.key === CANCEL_KEY) {
+        // Terra Draw clears its own store on this key; what it cannot do is tell us, so
+        // the session state is reset here. Without it the draw controls stay on screen
+        // offering to finish a ring that no longer exists.
+        if (isDrawing) handleCancelDrawing()
+        else if (featureMode !== null) handleCancelFeatureMode()
+        return
+      }
+
+      if (event.key === FINISH_KEY) {
+        // If the canvas has focus the adapter will handle this itself; doing it here too
+        // would finish twice.
+        if (target === map.current?.getCanvas()) return
+        if (isDrawing) handleFinishArea()
+        else if (featureMode === 'line') handleFinishLine()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  })
+
   const hasSession =
     pendingFeature !== null ||
     editingArea !== null ||
@@ -1519,7 +1614,10 @@ export default function MapShell() {
         {queuedTotal > 0 && (
           <div
             data-testid="queued-banner"
-            className="flex items-center justify-between gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 shadow"
+            // Capped and centred like the overlay sheet. Unconstrained it spanned the
+            // full window on desktop, putting the "Sync now" button a screen's width away
+            // from the text explaining it.
+            className="mx-auto flex w-full max-w-sm items-center justify-between gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 shadow"
           >
             <span>{queuedLabel} queued — offline, will sync</span>
             <button
@@ -1702,7 +1800,10 @@ export default function MapShell() {
             <button
               type="button"
               data-testid="undo-vertex"
-              onClick={handleUndoVertex}
+              onClick={(e) => {
+                blurAfterMouseClick(e)
+                handleUndoVertex()
+              }}
               className="flex min-h-11 items-center justify-center rounded-full bg-white px-4 text-sm font-medium text-gray-900 shadow"
             >
               Undo point
@@ -1710,7 +1811,10 @@ export default function MapShell() {
             <button
               type="button"
               data-testid="finish-line"
-              onClick={handleFinishLine}
+              onClick={(e) => {
+                blurAfterMouseClick(e)
+                handleFinishLine()
+              }}
               className="flex min-h-11 items-center justify-center rounded-full bg-gray-900 px-4 text-sm font-medium text-white shadow"
             >
               Finish line
@@ -1731,7 +1835,10 @@ export default function MapShell() {
             <button
               type="button"
               data-testid="undo-vertex"
-              onClick={handleUndoVertex}
+              onClick={(e) => {
+                blurAfterMouseClick(e)
+                handleUndoVertex()
+              }}
               className="flex min-h-11 items-center justify-center rounded-full bg-white px-4 text-sm font-medium text-gray-900 shadow"
             >
               Undo point
@@ -1739,10 +1846,27 @@ export default function MapShell() {
             <button
               type="button"
               data-testid="finish-area"
-              onClick={handleFinishArea}
+              onClick={(e) => {
+                blurAfterMouseClick(e)
+                handleFinishArea()
+              }}
               className="flex min-h-11 items-center justify-center rounded-full bg-gray-900 px-4 text-sm font-medium text-white shadow"
             >
               Finish area
+            </button>
+            {/* Lines already had a way out; polygons had none, so Escape (which empties
+                Terra Draw's store) left the only exits as drawing a fresh ring or
+                reloading. */}
+            <button
+              type="button"
+              data-testid="cancel-drawing"
+              onClick={(e) => {
+                blurAfterMouseClick(e)
+                handleCancelDrawing()
+              }}
+              className="flex min-h-11 items-center justify-center rounded-full bg-white px-4 text-sm font-medium text-gray-700 shadow"
+            >
+              Cancel
             </button>
           </div>
         ) : (
