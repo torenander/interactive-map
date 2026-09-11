@@ -1,6 +1,6 @@
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // Optional. Unset (default) keeps every path root-relative ('/'), matching
@@ -9,9 +9,56 @@ import { VitePWA } from 'vite-plugin-pwa'
 // site at /<repo>/) — see docs/DEPLOY.md § GitHub Pages. Must end with '/'.
 const BASE = process.env.VITE_BASE || '/'
 
+// G7: announce the MapLibre worker in the document head so its fetch overlaps
+// module evaluation instead of queueing behind it.
+//
+// src/map/MapShell.tsx blocks the whole module graph on resolving the worker
+// (a load-bearing Vite 8 workaround — see the comment there; the map must
+// never be created against an unresolved worker URL). That made the worker's
+// ~500KB fetch strictly sequential after the entry chunk: measured on the
+// deployed build, the entry finished at 963ms, the worker ran 1082-1329ms, and
+// the first tile range request only went out at 1820ms.
+//
+// The filename is content-hashed, so the link cannot be written by hand in
+// index.html — it is read out of the emitted bundle instead. `as="fetch"`
+// rather than `as="script"` because MapShell fetches the file with `fetch()`
+// and hands MapLibre a blob URL; the preload has to match that request's type
+// or the browser downloads it twice.
+function preloadMapLibreWorker(): Plugin {
+  return {
+    name: 'areamap:preload-maplibre-worker',
+    apply: 'build',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html, ctx) {
+        const fileName = Object.keys(ctx.bundle ?? {}).find((name) =>
+          /maplibre-gl-worker.*\.js$/.test(name),
+        )
+        if (!fileName) return html
+        return {
+          html,
+          tags: [
+            {
+              tag: 'link',
+              attrs: {
+                rel: 'preload',
+                as: 'fetch',
+                crossorigin: 'anonymous',
+                href: `${BASE}${fileName}`,
+              },
+              injectTo: 'head-prepend',
+            },
+          ],
+        }
+      },
+    },
+  }
+}
+
 export default defineConfig({
   base: BASE,
   plugins: [
+    preloadMapLibreWorker(),
     react(),
     tailwindcss(),
     VitePWA({
