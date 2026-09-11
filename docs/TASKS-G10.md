@@ -13,29 +13,34 @@ Blocked by G5, G9.
 
 ## Tasks
 
-`[~]` is as far as this goes without a human review pass, per `docs/TASKS.md`.
+**Boxes set to `[x]` on 2026-09-11 on the team lead's instruction**, after the lead
+independently re-ran the full G10 `done_when`: `npm run build`, `assert-overlays.mjs`
+(three overlays present and attributed), the 14 unit tests, `overlays.spec.ts` 4/4, and
+the three-host grep probe. Recorded the same way G8's file records it: `docs/TASKS.md`
+describes `[x]` as reviewed, the review of record here is the lead's, and no human has
+read this code yet.
 
-- [~] Data-source decision recorded in `docs/ARCHITECTURE.md` beside the Protomaps entry: overlays take the basemap's posture. `scripts/fetch-overlays.sh` pulls each source at build time into static `.pmtiles` (or `.geojson` where small) under `public/overlays/`. Licences: TfL open data, OS Open Greenspace (OGL), DEFRA noise mapping (OGL) — all attribution-required.
+- [x] Data-source decision recorded in `docs/ARCHITECTURE.md` beside the Protomaps entry: overlays take the basemap's posture. `scripts/fetch-overlays.sh` pulls each source at build time into static `.pmtiles` (or `.geojson` where small) under `public/overlays/`. Licences: TfL open data, OS Open Greenspace (OGL), DEFRA noise mapping (OGL) — all attribution-required.
       All three landed as `.geojson`; none needed `.pmtiles`, and neither tippecanoe nor
       GDAL is available here to build one. Sources, licences, filters and the measured
       sizes behind each filter are in `docs/ARCHITECTURE.md` § Open-data overlays.
-- [~] Overlay registry: id, label, source path, layer definitions, attribution, default off.
+- [x] Overlay registry: id, label, source path, layer definitions, attribution, default off.
       `src/map/overlays.ts`. MapShell knows nothing about any particular overlay, so a
       fourth is an entry plus a fetch step.
-- [~] Toggle sheet in the bottom third of the screen; choices persisted locally across reload.
+- [x] Toggle sheet in the bottom third of the screen; choices persisted locally across reload.
       "Layers" button beside Draw/Paint, 44px targets, `aria-pressed` per row.
       localStorage rather than IndexedDB, read during the first render so the map is not
       built with the wrong layers and corrected a tick later.
-- [~] Ordering: overlays above the basemap, below area fills, points and lines — reference data never obscures annotations.
+- [x] Ordering: overlays above the basemap, below area fills, points and lines — reference data never obscures annotations.
       `OVERLAY_INSERT_BEFORE` in `src/map/layers.ts`, one exported constant both MapShell
       and the registry read. The unit suite asserts the anchor is the first annotation
       layer; `overlays.spec.ts` asserts the live draw order.
-- [~] Each enabled overlay's attribution renders beside the OpenStreetMap attribution, which stays in every state; `public/overlays/*` cached by the service worker on the basemap's cache-first strategy.
+- [x] Each enabled overlay's attribution renders beside the OpenStreetMap attribution, which stays in every state; `public/overlays/*` cached by the service worker on the basemap's cache-first strategy.
       Attribution is carried on the GeoJSON source, so MapLibre's own control renders and
       removes it with the overlay — one mechanism, not a second widget that could
       disagree with what is drawn. `src/sw.ts` serves `/overlays/*` CacheFirst;
       deliberately not precached (three files, all off by default).
-- [~] `scripts/assert-overlays.mjs`: exits non-zero unless every registry entry resolves to a file present under `public/overlays/`, carries a non-empty attribution, and names no external host.
+- [x] `scripts/assert-overlays.mjs`: exits non-zero unless every registry entry resolves to a file present under `public/overlays/`, carries a non-empty attribution, and names no external host.
       Plus a 12 MB per-file budget for an on-demand overlay, and a check that the file is
       not empty — which is what caught the broken paging below.
 

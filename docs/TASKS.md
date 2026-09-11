@@ -932,9 +932,43 @@ queued with nothing in the database, then flushed on reconnect and surviving a r
 
 ---
 
-# G10 — task breakdown
+# G10 — Open data overlays — done 2026-09-11
 
-Goal block: `docs/OBJECTIVES.md` § G10. Task breakdown lives in its own file, per the
-G2–G5 convention.
+Task breakdown: `docs/TASKS-G10.md` (teammate goals-author).
 
-- `docs/TASKS-G10.md` — Open data overlays (blocked by G5, G9)
+All five `done_when` commands exit 0, re-run independently by the lead after the
+teammate's own run: `npm run build`, `node scripts/assert-overlays.mjs` (three overlays
+present and attributed, 0.08 / 3.23 / 3.98 MB), 14 unit tests, `overlays.spec.ts` 4/4 at
+390x844, and the grep probe for the three source hosts. Regression sweep on top, since
+`MapShell.tsx` and `src/sw.ts` are shared: whole unit suite 88 passed across 8 files,
+whole e2e suite 26 passed, `tsc` clean on the app and service-worker projects. E2E on
+committed defaults, no `VITE_TILES_URL` override.
+
+Overlays take the basemap's posture, and that is the decision behind everything else
+here: TfL stations, OS Open Greenspace and DEFRA road-noise contours are extracted once
+by `scripts/fetch-overlays.sh` and served as tracked files on this app's own origin, so
+no keyed, metered or uncapped service sits in the request path and an overlay a user
+switched on still works with no signal. Full rationale and the filter table in
+`docs/ARCHITECTURE.md` § Open-data overlays.
+
+Three things worth surfacing here:
+
+- **The DEFRA endpoint ignores `offset` silently** — `offset=0` and `offset=5` return the
+  identical five features — and pages on `startIndex` via each response's `next` link. A
+  first implementation looped on `offset` and re-read page one forever, pulling 582,000
+  "features" from a 14,242-feature band before it was killed. The fetch now follows the
+  `next` link, refuses to revisit a URL, and reconciles rows read against the server's own
+  `numberMatched` per band, so a paging regression fails loudly instead of producing a
+  plausible-looking partial file.
+- **Every filter is recorded, and the filtered overlay says so in the UI.** The noise
+  extract is 28.1 MB raw over 35,055 polygons (one carries 158,216 coordinates); ~17 m
+  simplification and a 200 m² fragment floor bring it to 4.0 MB with both loud bands kept,
+  and the toggle reads "Road noise, 70 dB+" rather than implying an unshaded street was
+  measured as quiet.
+- **Known limit, documented not hidden:** with the network hard-blocked, MapLibre logs
+  "Importing a module script failed" starting a worker from the blob URL G5 hands it. A
+  GeoJSON overlay source is the first thing here to want more than one worker, which is
+  why `offline-map.spec.ts` is clean and this is not. The overlay still paints from cache
+  with its attribution, so `overlays.spec.ts` tolerates exactly those two messages and
+  fails on any other page error. Serving the worker from a real same-origin URL is the
+  real fix — G5/G7-shaped follow-up, not part of this goal.
