@@ -34,11 +34,17 @@ const DIST = process.env.DIST_DIR || 'dist'
 // chunking. See docs/TASKS-G7.md § Measured baselines.
 const GZIP_BUDGET = 380_000
 
-// Minifier-stable identifiers: both survive as string literals in error
-// paths, so they are reliable proof that the dependency itself is present
-// rather than just a name that happened to be mangled away.
+// Strings that only each library's own code can produce, so a hit means the
+// dependency itself was bundled here rather than merely named.
+//
+// 'TerraDraw' was the obvious marker and was wrong: destructuring the dynamic
+// import (`const { TerraDraw, ... } = await import('terra-draw')`) leaves the
+// export names in the importing chunk, so the check failed while terra-draw
+// sat correctly in its own chunk. An internal error message cannot be produced
+// that way. Whatever replaces these must keep that property — a marker that a
+// caller can write by accident tests nothing.
 const FORBIDDEN = [
-  ['TerraDraw', 'terra-draw must load after the map exists'],
+  ['Terra Draw is not enabled', 'terra-draw must load after the map exists'],
   ['GoTrueClient', '@supabase/supabase-js must load off the pre-map path'],
 ]
 
