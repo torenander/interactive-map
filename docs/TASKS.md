@@ -833,12 +833,44 @@ dragging a saved area's vertex impossible.
 
 ---
 
-# G7–G10 — planned
+# G9 — Point and line features — done 2026-09-11
 
-Goal blocks: `docs/OBJECTIVES.md` § G7–G10. Task breakdowns live in their own files,
-per the G2–G5 convention:
+Task breakdown: `docs/TASKS-G9.md` (teammate draw-accuracy, backend and UI stages).
+
+All five `done_when` commands exit 0, re-run independently by the lead after the
+teammate's own run: `db reset` (nine migrations, 0001–0009), the types diff clean,
+`npm run build`, 16 unit tests across `save-feature.test.ts` and `schema.test.ts`, and
+`points-lines.spec.ts` — on committed defaults, with `public/tiles/london.pmtiles`
+present rather than the z14 override. Regression sweep on top, since MapShell is shared:
+the full unit suite and the whole e2e directory, 22 e2e tests across nine suites.
+
+Design notes: `public.map_features` is its own table (migrations 0008, 0009) — `areas` is
+untouched, and the shapes genuinely differ, since an area derives H3 cells and a feature
+derives none. One table covers both kinds with `kind` kept honest against
+`geometrytype(geom::geometry)`. 0009 adopts the `save_area_tx` posture up front rather
+than over two migrations as `areas` needed: SECURITY DEFINER with INSERT/UPDATE revoked
+from the client roles, `user_id` from `auth.uid()`, ownership as a predicate on the
+conflict path, one generic 404.
+
+Tap precedence, now three pointer consumers: brush owns the pointer while active (G8's
+rule), any open session blocks, and otherwise a point or line beats the area beneath it.
+That last rule needed an explicit hit test rather than layer order — drawing features
+last decides what is visible on top but does not stop the area fill's layer-scoped click
+handler from firing.
+
+Hardening beyond the goal's own gates: the feature offline queue shipped implemented but
+unproven, since G9's `done_when` has no offline assertion. `points-lines.spec.ts` now
+carries an offline round trip mirroring `offline.spec.ts` — queued and rendered as
+queued with nothing in the database, then flushed on reconnect and surviving a reload.
+
+---
+
+# G7, G8, G10 — task breakdowns
+
+Goal blocks: `docs/OBJECTIVES.md`. Task breakdowns live in their own files, per the
+G2–G5 convention. G7 and G8 are complete (see their own files for measured results); no
+entry has been written for them here yet.
 
 - `docs/TASKS-G7.md` — Load performance (blocked by G5)
 - `docs/TASKS-G8.md` — Brush painting of H3 cells (blocked by G3, G6)
-- `docs/TASKS-G9.md` — Point and line features (blocked by G3, G4, G6)
 - `docs/TASKS-G10.md` — Open data overlays (blocked by G5, G9)

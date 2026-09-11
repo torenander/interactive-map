@@ -171,3 +171,38 @@ point after a reload: the map comes back long before the data does, and waiting 
 `isStyleLoaded()` alone tapped bare ground. The tests now wait on
 `queryRenderedFeatures` over the feature layers — the same question the click handler
 asks — before tapping.
+
+---
+
+## Hardening — offline round trip proven 2026-09-11
+
+Deviation 4 above (the feature queue implemented but not gated) closed.
+`points-lines.spec.ts` gains a fourth test mirroring what `offline.spec.ts` proves for
+areas: a point saved with the network blocked queues and renders carrying `queued` — the
+amber that `fillColorExpression` paints instead of its rating colour — with nothing in
+`map_features`; then on reconnect it flushes through `save-feature` and survives a
+reload. No MapShell change was needed: the queued rendering was already implemented in
+the UI stage, so this was purely a missing assertion.
+
+Measured: `points-lines.spec.ts` 4/4 exit 0; full e2e directory 22/22 exit 0.
+
+**The flush assertion is load-bearing, proven by a red run.** Left offline, the poll
+fails with the point still queued after the full 20s rather than passing vacuously.
+
+**Finding worth carrying elsewhere: the `page.route` abort in these offline tests is
+inert.** `offline.spec.ts` pairs `context.setOffline(true)` with a
+`page.route(...).abort()` on its function URL and calls that route "the load-bearing
+block". Probed directly here on the `save-feature` equivalent — route registered, network
+left ON — the save goes straight through and never queues. The app registers a service
+worker, and a request it mediates is not seen by page-level route interception, so
+`setOffline` is what actually severs the path. This test therefore carries no route at
+all. `offline.spec.ts` is not broken by this (its `setOffline` does the real work) but its
+comment claims something measurement does not support; that file belongs to another
+goal, so it is flagged rather than edited.
+
+**Still not covered, deliberately:** the queued banner and its "Sync now" button count
+queued *areas* only, so a user whose only queued write is a feature sees the amber
+feature but no banner and no manual flush control — they depend on the `online`
+auto-flush. That is a UI gap, not a correctness one (nothing is rendered as saved before
+the server has it), and closing it means editing MapShell, which has passed to G10.
+Worth a follow-up goal rather than a silent fix.
