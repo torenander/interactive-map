@@ -975,11 +975,47 @@ Three things worth surfacing here:
 
 ---
 
-# G11 — Desktop — planned, not started
+# G11 — Desktop — done 2026-09-11
 
-Goal block: `docs/OBJECTIVES.md` § G11. Task breakdown: `docs/TASKS-G11.md` (blocked by
-G6), drafted from two measured recon passes rather than from assumption.
+Task breakdown: `docs/TASKS-G11.md` (teammates draw-accuracy on `src`, perf-probe on tests
+and config, goals-author keeping the ledger).
 
-No task in that file has been started; every box is `[ ]`. Implementation should follow
-the e2e flakiness fix — the suite is already intermittent under parallel load, and G11
-adds a second Playwright project to that contention.
+All nine `done_when` commands exit 0, re-run independently by the lead at 3631262 after the
+implementers' own runs: the five grep probes, `npm run build`, the unit suite 88/88, the
+`mobile` project 33/33 at `retries=0` twice consecutively, and the `desktop` project 32/32
+at `--workers=1 retries=0`, inside the predicted 191 s band. The mobile line passing with
+none of its assertions edited is the "mobile 390x844 first, not mobile only" invariant on
+the record rather than asserted.
+
+What shipped: the rating sheet and queued banner capped and centred instead of spanning the
+window (measured 1440 px wide at 1440x900 before); Escape resetting session state rather
+than only Terra Draw's store, with a `cancel-drawing` control so a polygon draw has an exit;
+`dragRotate` and `touchPitch` disabled, since one stray right-drag took bearing to -146.7
+and pitch to 60 with no way back; keyboard operation of the rating sheet; `pointer` over
+saved geometry; and a `desktop` Playwright project over the suites made input-agnostic by a
+shared tap helper.
+
+Three things worth surfacing here:
+
+- **The `done_when` desktop line carries `--workers=1`**, amended 2026-09-11 with a dated
+  note in `docs/OBJECTIVES.md` § G11 on perf-probe's measurements: 5 workers gave 32/32 then
+  3 failures, 2 workers 32/32 then 2 then 2, 1 worker five deterministic runs once the
+  `perf-load` assertion defect (fixed in b46323d) is excluded. Not a weakened check — no
+  assertion, threshold or timeout moved, and a gate that stops failing on machine contention
+  fails only on merit.
+- **A causal claim was retracted mid-goal.** The `preventScroll` line shipped with a comment
+  and a commit message attributing a `draw-precision` failure to it. draw-accuracy raised
+  against their own evidence that every comparison varied configuration and the suspect line
+  together, so nothing was isolated; perf-probe's later run of the missing cell was green.
+  The fix stands on mechanism, the attribution is retracted, and causation is unresolved and
+  immaterial — the configuration it appeared in is no longer any gate's configuration. The
+  comment was rewritten to the mechanism alone (3631262); the retracted wording survives only
+  in cb80aaf's immutable message, and `docs/TASKS-G11.md` is the correction of record.
+- **One anomalous count is recorded, not dropped.** The lead's first mobile run reported 32
+  passed where 33 tests exist, with output truncated to one line so it cannot be
+  reconstructed. Two clean `retries=0` mobile runs at 33/33 followed. Evidence of nothing,
+  kept because an unexplained number that nobody can reconstruct is what quietly disappears.
+
+`docs/TASKS-G11.md` also carries a reading note earned the hard way: the boxes are a ledger,
+not a status board, an unticked box means "not yet recorded" rather than "not yet done", and
+status comes from asking the owner rather than from the file, a free lock, or the branch.

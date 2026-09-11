@@ -21,8 +21,20 @@ interactions). Every figure in the tasks below is measured, not estimated.
 
 ## Tasks
 
-Marks carry whose run they rest on. `[~]` is an implementer's watched run; `[x]` waits on
-the lead's independent validation.
+Marks carry whose run they rest on. Every box below is `[x]` on **the lead's independent
+validation at 3631262, 2026-09-11**: five grep probes exit 0, `npm run build` 0, unit
+88/88, the `mobile` project 33/33 at `retries=0` twice consecutively, and the `desktop`
+project 32/32 at `--workers=1 retries=0` once, inside the 191 s band. The implementer
+evidence under each box is kept — it is what the mark was raised on, and the lead's run is
+what it now rests on.
+
+**One anomaly, recorded rather than dropped.** The lead's *first* mobile run reported
+"32 passed" where 33 tests exist, and its output had been truncated to a single line, so
+the discrepancy cannot be diagnosed after the fact — possibly a retry-masked flake,
+possibly a miscapture. It was followed by two clean `retries=0` mobile runs at 33/33, and
+the desktop run was also `retries=0`. This is not evidence of anything; it is here because
+an unexplained count that nobody can reconstruct is exactly the kind of thing that gets
+quietly dropped.
 
 **How to read this file:** the boxes are a ledger, not a status board. Every one lags the
 work it describes — the implementer runs, reports, and only then does it get marked here —
@@ -32,35 +44,35 @@ owner; do not infer from this file, from a free lock, or from what is on the bra
 
 ### src — draw-accuracy (commits 53d6b9d MapShell, cb80aaf RatingModal)
 
-- [~] Cap the rating sheet's width, centred, matching the overlay sheet
+- [x] Cap the rating sheet's width, centred, matching the overlay sheet
       (`src/areas/RatingModal.tsx:71`, measured 1440 px wide at 1440x900)
       → `max-w-sm` + `mx-auto`. Measured after: sheet 384 px, Save button 352 px in a
       1440 px window.
-- [~] Same treatment for the queued banner (`src/map/MapShell.tsx:1514`)
+- [x] Same treatment for the queued banner (`src/map/MapShell.tsx:1514`)
       → same cap and centring.
-- [~] Escape resets MapShell session state, not only Terra Draw's store: clear
+- [x] Escape resets MapShell session state, not only Terra Draw's store: clear
       `isDrawing` / `featureMode` / pending geometry (`MapShell.tsx:568`, `:601` — Terra
       Draw emits no cancel event, which is why the UI currently lies)
       → measured after: `finish-area` gone, `start-drawing` back, Terra Draw's store
       empty; same for line mode (`finish-line` / `start-line`) and point mode
       (`point-hint` / `start-point`).
-- [~] Render a `cancel-drawing` control while a polygon is being drawn, as lines already
+- [x] Render a `cancel-drawing` control while a polygon is being drawn, as lines already
       have `cancel-feature`
       → `data-testid="cancel-drawing"`, the string the gate greps for, modelled on
       `cancel-feature`; verified present while drawing.
-- [~] `instance.dragRotate.disable()` and `instance.touchPitch.disable()` after map
+- [x] `instance.dragRotate.disable()` and `instance.touchPitch.disable()` after map
       creation — right-drag measured bearing 0 → -146.7, pitch 0 → 60, with no way back
       → measured after: right-drag leaves bearing 0 → 0 and pitch 0 → 0.
-- [~] `RatingModal`: Escape dismisses, focus moves into the sheet on open, Tab stays
+- [x] `RatingModal`: Escape dismisses, focus moves into the sheet on open, Tab stays
       inside it (measured: none of the three, and the first two tab stops are behind the
       sheet)
       → measured after: focus lands on the dialog, Tab cycles inside and reaches
       `save-area`, Escape closes.
-- [~] Cursor `pointer` over saved areas, lines and points (measured `grab`; point mode's
+- [x] Cursor `pointer` over saved areas, lines and points (measured `grab`; point mode's
       `crosshair` shows the mechanism already exists)
       → measured after: `pointer` over all three, `grab` over empty map, and still `grab`
       while brushing, so the cursor never fights a mode.
-- [~] **Measure first, then decide:** whether `Enter` finishes a ring when the last click
+- [x] **Measure first, then decide:** whether `Enter` finishes a ring when the last click
       was a toolbar button rather than the canvas.
       → **Measured, and the answer was "implement", not "document".** `Enter` finishes
       when the last click was the canvas; after a toolbar click the button keeps focus and
@@ -113,13 +125,13 @@ correction touches. Box 8's `Enter` finding is likewise a measurement, not a ded
 All three verified against 019f214 with `src` frozen at cb80aaf, under the e2e lock,
 released after each run.
 
-- [~] Derive `map-shell.spec.ts`'s two geometry assertions from the viewport (`:6` exact
+- [x] Derive `map-shell.spec.ts`'s two geometry assertions from the viewport (`:6` exact
       390x844, `:86` the `844 * 2/3` third)
       → `! grep -q "844 \* (2 / 3)" tests/e2e/map-shell.spec.ts` exit 0; map-shell's 7
       tests pass under both projects. The assertions now read `test.info().project.use`
       and `page.viewportSize()`. The bottom-third claim was always a proportion — the
       literal 844 made it mobile-only by accident.
-- [~] Add the `desktop` project to `playwright.config.ts`; extract tap/click into a shared
+- [x] Add the `desktop` project to `playwright.config.ts`; extract tap/click into a shared
       input helper so the portable touch suites run under both
       → `--project=mobile` exit 0, 81 s, **33 passed** with no assertion edited — the
       mobile-first gate on the record. `--project=desktop --workers=1` exit 0, 191 s,
@@ -127,7 +139,7 @@ released after each run.
       the diff is tap calls, imports and comments and nothing else. Drags were left alone,
       `page.mouse` already working under both input models. `touch-draw` is deliberately
       out of the desktop project.
-- [~] Write `tests/e2e/desktop.spec.ts`
+- [x] Write `tests/e2e/desktop.spec.ts`
       → six tests, and the red-first method is worth recording because the obvious version
       of it lies. perf-probe's first run passed 6/6 — draw-accuracy's implementation was
       already present uncommitted in this shared worktree, so the run was testing the
@@ -139,7 +151,7 @@ released after each run.
 
 ### close-out
 
-- [~] Run every `done_when` command; record outputs.
+- [x] Run every `done_when` command; record outputs.
       The desktop line carries `--workers=1` as of the 2026-09-11 amendment in
       `docs/OBJECTIVES.md` § G11 (perf-probe's measurements, lead-approved): five
       consecutive single-worker runs deterministic once the `perf-load` assertion defect
