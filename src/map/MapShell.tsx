@@ -10,14 +10,7 @@ import {
 } from 'maplibre-gl'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { Protocol } from 'pmtiles'
-import {
-  TerraDraw,
-  TerraDrawModeUndoRedo,
-  TerraDrawPolygonMode,
-  TerraDrawSelectMode,
-  type SnapToCustom,
-} from 'terra-draw'
-import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter'
+import type { SnapToCustom, TerraDraw } from 'terra-draw'
 import { buildStyle, LONDON_CENTER, LONDON_ZOOM } from './style'
 import { nearestVertexWithin } from './snapping'
 import { fillColorExpression } from '../areas/color'
@@ -171,6 +164,11 @@ export default function MapShell() {
   const container = useRef<HTMLDivElement>(null)
   const map = useRef<MapLibreMap | null>(null)
   const draw = useRef<TerraDraw | null>(null)
+  // Resolves once Terra Draw has been fetched and started, or with null if the
+  // map was torn down or the import failed. Anything a user can trigger before
+  // then waits on this instead of reading `draw.current` and silently doing
+  // nothing — see handleStartDrawing.
+  const drawReady = useRef<Promise<TerraDraw | null>>(Promise.resolve(null))
   const flushingRef = useRef(false)
 
   const [mapReady, setMapReady] = useState(false)
@@ -238,7 +236,19 @@ export default function MapShell() {
     // requires controls in the bottom third of the screen.
     instance.addControl(geolocate, 'bottom-right')
 
-    instance.on('load', () => {
+    let announceDraw: (ready: TerraDraw | null) => void = () => {}
+    drawReady.current = new Promise<TerraDraw | null>((resolve) => {
+      announceDraw = resolve
+    })
+
+    // G7: Terra Draw and its MapLibre adapter are fetched here rather than
+    // imported at the top of the module — 23,946 B gzip that the map does not
+    // need to paint, and that nobody can use until there is a map to draw on.
+    // The whole handler is async as a result, so everything downstream of it,
+    // `setMapReady` included, happens after the modules land. That ordering is
+    // deliberate: it keeps a single point at which the drawing surface becomes
+    // real, rather than a window where the map looks ready but taps do nothing.
+    async function setUpOnLoad() {
       instance.addSource(SAVED_AREAS_SOURCE, {
         type: 'geojson',
         data: toFeatureCollection([]),
@@ -282,6 +292,11 @@ export default function MapShell() {
           SNAP_PIXEL_DISTANCE,
         )
 
+      const [
+        { TerraDraw, TerraDrawModeUndoRedo, TerraDrawPolygonMode, TerraDrawSelectMode },
+        { TerraDrawMapLibreGLAdapter },
+      ] = await Promise.all([import('terra-draw'), import('terra-draw-maplibre-gl-adapter')])
+
       const terraDraw = new TerraDraw({
         adapter: new TerraDrawMapLibreGLAdapter({ map: instance }),
         modes: [
@@ -320,6 +335,7 @@ export default function MapShell() {
       terraDraw.start()
       terraDraw.setMode(STATIC_MODE)
       draw.current = terraDraw
+      announceDraw(terraDraw)
       ;(window as unknown as { __draw?: TerraDraw }).__draw = terraDraw
 
       terraDraw.on('finish', (id, context) => {
@@ -387,9 +403,21 @@ export default function MapShell() {
       instance.on('click', SAVED_AREAS_FILL_LAYER, handleAreaClick)
 
       setMapReady(true)
+    }
+
+    instance.on('load', () => {
+      void setUpOnLoad().catch((err) => {
+        // Without a drawing surface the map is still worth showing — saved
+        // areas render from the source added above — so surface the failure
+        // rather than leaving the "Draw area" button waiting on a promise that
+        // will never settle.
+        announceDraw(null)
+        setLoadError(err instanceof Error ? err.message : 'Could not load the drawing tools')
+      })
     })
 
     return () => {
+      announceDraw(null)
       draw.current?.stop()
       draw.current = null
       delete (window as unknown as { __draw?: TerraDraw }).__draw
@@ -481,8 +509,13 @@ export default function MapShell() {
     return () => window.removeEventListener('online', handleOnline)
   }, [runFlush])
 
-  function handleStartDrawing() {
-    draw.current?.setMode(POLYGON_MODE)
+  // Awaits the Terra Draw import rather than reading `draw.current`: the button
+  // is on screen from first paint, and a tap in the window before the modules
+  // land would otherwise set `isDrawing` with nothing behind it.
+  async function handleStartDrawing() {
+    const terraDraw = await drawReady.current
+    if (!terraDraw) return
+    terraDraw.setMode(POLYGON_MODE)
     setIsDrawing(true)
   }
 
@@ -749,7 +782,7 @@ export default function MapShell() {
             <button
               type="button"
               data-testid="start-drawing"
-              onClick={handleStartDrawing}
+              onClick={() => void handleStartDrawing()}
               className="rounded-full bg-gray-900 px-5 py-3 text-base font-medium text-white shadow"
             >
               Draw area
