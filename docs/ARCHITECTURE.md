@@ -18,6 +18,61 @@ Trade-off: you build and host the London extract yourself, and refresh it manual
 
 Attribution: OpenStreetMap contributors, required and non-negotiable, rendered on the map.
 
+## Open-data overlays — static build-time extracts, same posture as the basemap
+
+Reference layers (TfL stations and stops, OS Open Greenspace, DEFRA road-noise contours)
+are extracted once by `scripts/fetch-overlays.sh` and served as files under
+`public/overlays/` from this app's own origin. The app never talks to TfL, Ordnance
+Survey or DEFRA at runtime.
+
+Why, in order of how much it matters:
+
+- **No uncapped billing, no keys, no metering in the request path.** The same day-one
+  constraint that chose Protomaps over MapTiler. A live third-party API in the runtime
+  path is a dependency whose cost and availability this project does not control.
+- **Offline.** An overlay a user switched on has to work on a street with no signal, like
+  the basemap. A file on our origin can be cached by the service worker; a live API
+  response cannot be relied on.
+- **Attribution is fixed at extract time.** All three licences require attribution (TfL
+  Open Data; OS OpenData, Crown copyright; DEFRA under the OGL v3.0). The strings live in
+  `src/map/overlays.ts` next to the layer that needs them, MapLibre renders them beside
+  the OpenStreetMap line for as long as the overlay is on, and
+  `scripts/assert-overlays.mjs` refuses to pass if an entry has none.
+
+Trade-off: the extracts age, and refreshing them is a hand-run script, exactly as with the
+basemap. Acceptable for the same reason — stations, parks and trunk roads change on the
+order of years.
+
+The extracts are filtered, and every filter is recorded because each one is a claim about
+what the file does *not* contain:
+
+| Overlay | Extract | Filtered how |
+|---|---|---|
+| TfL stops | 497 stations, 0.08 MB | Station-level rows only (the API also returns entrances, platforms and access areas); bus stops excluded — ~19,000 of them would bury the network shape |
+| OS Open Greenspace | 3.2 MB | TQ national grid square, reprojected from British National Grid to WGS84; sites under 5,000 m² dropped (verges and estate lawns) |
+| DEFRA road noise | 10,833 polygons, 4.0 MB | Lden Round 3, the two loudest bands (70 dB and above) of six; simplified to ~17 m; fragments under 200 m² dropped |
+
+Those numbers are measured, not estimated. The unfiltered noise extract is 28.1 MB over
+35,055 polygons, one of which carries 158,216 coordinates; ~17 m simplification takes it
+to 8.6 MB and the 200 m² floor to 4.0 MB, while going coarser than ~17 m buys almost
+nothing (~35 m only reaches 8.2 MB). The label says "70 dB+" for the same reason the
+table exists: a filtered overlay must not imply coverage it does not have.
+
+Two mechanical decisions follow from this being static data:
+
+- **The files are tracked in git**, like `public/tiles/london-z14.pmtiles`. 7.3 MB total,
+  and it means a fresh clone renders overlays and passes `assert-overlays.mjs` without
+  fetching anything.
+- **They are cached on demand, not precached.** `src/sw.ts` serves `/overlays/*`
+  cache-first; precaching would make every install pay for three files that are off by
+  default. Overlays are off on first run: three at once is an unreadable map.
+
+Overlay layers are inserted before the first annotation layer (`src/map/layers.ts`), so
+reference data always draws above the basemap and below the user's own areas, painted
+selections, points and lines. That ordering is a single exported constant rather than an
+argument at each call site, so an overlay cannot end up on top of the work it is meant to
+inform.
+
 ## Drawing — Terra Draw
 
 Adapter-based, so the drawing layer is not coupled to MapLibre. Clean mode API for adding a brush mode later without rewriting the polygon path.
