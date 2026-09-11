@@ -169,25 +169,20 @@ one regardless.
 
 ---
 
-## Frozen for revalidation, and the sequence out of it
+## The freeze and the sequence out of it — complete bar validation
 
-`src/*` is frozen at cb80aaf — draw-accuracy announces before touching it — so
-perf-probe's determinism measurement has a still tree underneath it. The eight `[~]`
-boxes should reproduce exactly against that commit; if one does not, that is a real
-difference rather than the tree having moved under the run.
+`src/*` was frozen at cb80aaf while perf-probe measured determinism, so the eight boxes
+above rest on a still tree. The lead's sequence out of it ran as ruled:
 
-The lead's sequence out of the freeze, in order:
-
-1. perf-probe's full `done_when` run completes against the current tree.
-2. draw-accuracy gets a one-commit unfreeze to rewrite the comment at
-   `src/areas/RatingModal.tsx:64` so it carries **only** the mechanism rationale —
-   `focus()` scrolls, the sheet sits at the bottom of the viewport, a modal must not move
-   the map under the pointer. Per the house comment rule: state the constraint the code
-   cannot show, no causal war story and no bisection narrative. The retraction stays here,
-   in the ledger, which is the correction of record.
-3. The lead's independent validation runs against that final sha. A comment-only delta
+1. **Done** — perf-probe's full `done_when` run against 019f214, every command exit 0
+   (table above).
+2. **Done** — draw-accuracy's one-commit unfreeze, 3631262, rewriting the comment at
+   `src/areas/RatingModal.tsx` to the mechanism alone and touching nothing else.
+3. **Pending** — the lead's independent validation, against 3631262. A comment-only delta
    does not invalidate perf-probe's behavioural results, and the lead's run is the
    authoritative one regardless.
+
+`src/*` is unfrozen as of step 2, with no further edits planned.
 
 ## Note for whoever reconciles run logs against this file
 
