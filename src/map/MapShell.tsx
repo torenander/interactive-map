@@ -763,9 +763,9 @@ export default function MapShell() {
 
       // Desktop discoverability: with a mouse, the cursor is the only thing that says a
       // shape is interactive, and it read `grab` over saved areas, lines and points —
-      // identical to empty map. Point mode already sets `crosshair`, so the mechanism
-      // existed and simply was not wired for saved geometry. Touch has no hover, so
-      // nothing about the mobile target changes.
+      // identical to empty map. Terra Draw already manages the cursor while one of its
+      // modes is placing geometry; nothing did so for geometry already saved, which is
+      // what this wires. Touch has no hover, so nothing about the mobile target changes.
       for (const layer of [
         SAVED_AREAS_FILL_LAYER,
         SAVED_FEATURES_CIRCLE_LAYER,
