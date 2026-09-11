@@ -200,9 +200,51 @@ all. `offline.spec.ts` is not broken by this (its `setOffline` does the real wor
 comment claims something measurement does not support; that file belongs to another
 goal, so it is flagged rather than edited.
 
-**Still not covered, deliberately:** the queued banner and its "Sync now" button count
-queued *areas* only, so a user whose only queued write is a feature sees the amber
-feature but no banner and no manual flush control — they depend on the `online`
-auto-flush. That is a UI gap, not a correctness one (nothing is rendered as saved before
-the server has it), and closing it means editing MapShell, which has passed to G10.
-Worth a follow-up goal rather than a silent fix.
+**~~Still not covered, deliberately:~~ closed 2026-09-11.** The queued banner and its
+"Sync now" button counted queued *areas* only, so a user whose only queued write was a
+feature saw the amber feature but no banner and no manual flush control — left depending
+on the `online` auto-flush. A UI gap rather than a correctness one (nothing was ever
+rendered as saved before the server had it), deferred at the time because MapShell had
+passed to G10. See the fix below.
+
+## Queued-banner gap — fixed 2026-09-11
+
+The banner gated on `queuedAreas.length`; it now gates on the sum of both queues.
+`runFlush` already drained both, so "Sync now" needed no change at all — the whole defect
+was the gate and the label.
+
+The label **names the kinds rather than totalling them**: "1 area queued", "1 feature
+queued", "1 area and 1 feature queued". Totalling would have produced "2 queued", which
+says neither, and would have broken `offline.spec.ts`'s `toContainText('1 area queued')`
+— a G7 regression gate belonging to another goal. Naming keeps the areas-only wording
+byte-identical to what it has always been.
+
+The count stays honest by construction: an entry leaves either queue only after a
+successful flush, so it can never overstate what the server has (CLAUDE.md — never render
+a save as complete before the server has it).
+
+### Measured
+
+| Command | Exit | Result |
+|---|---|---|
+| `npm run build` | 0 | — |
+| `npm run test:e2e -- tests/e2e/points-lines.spec.ts` | 0 | 5 passed |
+| `npm run test:e2e -- tests/e2e/offline.spec.ts` | 0 | 1 passed — areas-only wording intact |
+| `npm run test:e2e -- tests/e2e/brush.spec.ts` | 0 | 3 passed |
+
+**Red run first.** With the banner assertion written and the fix not yet applied,
+`points-lines.spec.ts` failed on `getByTestId('queued-banner')` — "element(s) not found"
+— which is precisely the reported gap reproduced before touching MapShell.
+
+A fifth test covers the combined label specifically. It is the only genuinely new branch
+and the one neither other suite can reach: `offline.spec.ts` only ever queues an area and
+the offline feature test only ever queues a feature, so without it "1 area and 1 feature
+queued" would have shipped unexercised.
+
+**One thing asserted weaker than it looks:** that "Sync now" *itself* performs the flush
+is not proven. `setOffline(false)` fires `online`, which MapShell auto-flushes on, so the
+queue may already be empty before the button is tapped — the tap is best-effort, exactly
+as in `offline.spec.ts`. What is proven deterministically is that the control exists and
+is enabled in the feature-only queued state (checked while still offline), and that the
+queue drains and the rows land. Distinguishing the two flush paths would need a way to
+restore the network without firing `online`, which Playwright does not offer.
