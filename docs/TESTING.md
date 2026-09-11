@@ -244,8 +244,17 @@ The cost is 174-192 s against roughly 100 s. A deterministic three-minute gate i
 more than a ninety-second coin flip; a gate that fails intermittently on merit teaches
 people to re-run it, which is how a real failure gets waved through.
 
-The same applies when the desktop lane reaches `ci.yml`: it needs its own step with the
-flag, not a second project bolted onto the existing `npm run test:e2e` invocation.
+The same applies in `ci.yml`, where it is now applied: the e2e gate is two steps, one per
+project, and the desktop step carries `--workers=1`. A bare `npm run test:e2e` runs both
+projects together — 65 tests where 27 used to run — at default parallelism on a two-core
+runner, which is exactly the configuration this section says does not work.
+
+**That gap was recorded here and not applied, and CI failed on it twice.** Writing a
+constraint down is not the same as enforcing it, and nothing gated the distance between the
+two: no goal's `done_when` runs `ci.yml`, so a workflow can contradict a documented
+invariant indefinitely without any gate noticing. Worth remembering when the next
+convention lands in this file — ask what would fail if somebody ignored it, and if the
+answer is nothing, say so where it is written.
 
 ## Commands
 

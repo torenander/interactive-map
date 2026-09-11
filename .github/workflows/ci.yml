@@ -1,7 +1,14 @@
 name: CI
 
+# `push` is scoped to main so a PR branch runs its gates once. Unscoped, a PR
+# gets both a push event and a pull_request event, and the concurrency group below
+# does not dedupe them: the two carry different `github.ref` values
+# (refs/heads/<branch> vs refs/pull/<n>/merge), so they land in different groups and
+# both run. That doubled every Docker pull and hit ECR rate limits on PR #2.
+# Pushes to main still trigger CI exactly as before.
 on:
   push:
+    branches: [main]
   pull_request:
 
 concurrency:
@@ -84,8 +91,25 @@ jobs:
       - name: Gate — npm run test (unit)
         run: npm run test
 
-      - name: Gate — npm run test:e2e (map-shell, mvp-loop, offline, offline-map, touch-draw)
-        run: npm run test:e2e
+      # Two steps, not one invocation. Since the desktop project landed, a bare
+      # `npm run test:e2e` runs BOTH projects together — 65 tests where 27 used to
+      # run — at default parallelism on a two-core runner. docs/TESTING.md records
+      # why that fails: the suite assumes exclusive access to the machine and to
+      # dist/, and desktop Chromium at 1440x900 costs far more per worker than
+      # WebKit at 390x844. Measured locally, the desktop project at default workers
+      # failed 1 run in 2; at --workers=1 it was clean across 13 runs.
+      #
+      # Splitting also keeps a failure attributable: one step per project says which
+      # lane broke without reading the matrix.
+      - name: Gate — npm run test:e2e (mobile project)
+        run: npm run test:e2e -- --project=mobile
+
+      # --workers=1 per docs/OBJECTIVES.md § G11's amended done_when. The flag is the
+      # gate, not a speed knob: without it this lane fails intermittently on merit,
+      # which teaches people to re-run CI, which is how a real failure gets waved
+      # through.
+      - name: Gate — npm run test:e2e (desktop project)
+        run: npm run test:e2e -- --project=desktop --workers=1
 
       - name: Gate — node scripts/assert-pwa.mjs
         run: node scripts/assert-pwa.mjs
