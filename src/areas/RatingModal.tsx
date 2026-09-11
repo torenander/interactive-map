@@ -1,7 +1,7 @@
 // Bottom sheet for rating + commenting on an area. SPEC.md § Field UX: dismissible with
 // one thumb, and dismissing must not lose the drawn geometry — this component only ever
 // reports "dismiss" up to MapShell, which decides what that means for the pending draw.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type RatingModalMode = "create" | "edit";
 
@@ -52,6 +52,63 @@ export default function RatingModal({
   const mountTimeRef = useRef(performance.now());
   const GHOST_CLICK_EPSILON_MS = 50;
 
+  // Desktop keyboard. Measured before this: Escape did nothing, focus stayed on the map
+  // canvas when the sheet opened, and Tab reached the geolocate control and the
+  // attribution link — both *behind* the sheet — before it reached anything inside it.
+  // None of that mattered on touch, where there is no Tab and no Escape.
+  const sheetRef = useRef<HTMLDivElement>(null);
+
+  // Focus the sheet itself rather than its first control: landing on "Poor" makes it look
+  // preselected, and a stray Space or Enter would then set a rating the user never chose.
+  useEffect(() => {
+    // `preventScroll` is load-bearing, not a nicety. Without it, focusing the sheet
+    // scrolls it into view, which shifts the map canvas under the pointer — measured as
+    // a regression in draw-precision.spec.ts on the desktop project, where a click aimed
+    // at a saved area landed on empty map and the sheet never reopened.
+    sheetRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onDismiss();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      // Keep Tab inside the sheet. Without this, tabbing off the end lands on controls
+      // the sheet is covering — reachable by keyboard, invisible to the eye, and able to
+      // start a second drawing session underneath an open rating sheet.
+      const sheet = sheetRef.current;
+      if (!sheet) return;
+      const focusable = Array.from(
+        sheet.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => !el.hasAttribute("disabled"));
+      if (focusable.length === 0) return;
+
+      // Drive the whole cycle rather than only guarding its ends. Guarding the ends and
+      // letting the browser handle the middle looks equivalent and is not: WebKit's
+      // native Tab skips buttons entirely unless full keyboard access is enabled, so
+      // focus escaped the sheet from the middle of the list, where no end-guard was
+      // watching. Computing the next index and always preventing the default makes
+      // containment independent of each engine's tabbing policy.
+      event.preventDefault();
+      const active = document.activeElement as HTMLElement | null;
+      const index = active ? focusable.indexOf(active) : -1;
+      if (index === -1) {
+        (event.shiftKey ? focusable[focusable.length - 1] : focusable[0]).focus();
+        return;
+      }
+      const step = event.shiftKey ? -1 : 1;
+      focusable[(index + step + focusable.length) % focusable.length].focus();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onDismiss]);
+
   function handleBackdropDismiss(event: { timeStamp: number }) {
     if (event.timeStamp < mountTimeRef.current + GHOST_CLICK_EPSILON_MS) return;
     onDismiss();
@@ -67,8 +124,16 @@ export default function RatingModal({
         className="absolute inset-0 h-full w-full bg-black/30"
       />
 
+      {/* Capped and centred rather than spanning the window: measured 1440 px wide at
+          1440x900, which put a 1400 px Save button under a three-word label. max-w-sm is
+          the overlay sheet's cap, so the two read as the same surface. */}
       <div
-        className="absolute inset-x-0 bottom-0 rounded-t-2xl bg-white p-4 shadow-lg"
+        ref={sheetRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={mode === "create" ? "Rate this area" : "Edit this area"}
+        tabIndex={-1}
+        className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-sm rounded-t-2xl bg-white p-4 shadow-lg outline-none"
         style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)" }}
       >
         <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-gray-300" />
