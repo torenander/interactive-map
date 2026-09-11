@@ -227,12 +227,23 @@ The rate I first recorded here — "one in roughly seven" — was from incidenta
 **superseded** by the three populations in that section, which are kept separate because
 they are not samples of one thing.
 
-Two things that survive the fix. First, this was never evidence that `preventScroll` causes
+Two things survive the fix. First, this was never evidence that `preventScroll` causes
 anything: the retraction in point 2 held regardless, and the diagnosed cause is a test-side
-race rather than that line. Second, whether point 3's withdrawal should now be reversed is
-the lead's call, not mine — the diagnosed race is a candidate explanation for the original
-parallel-run failure too, but "candidate" is the honest word, and nobody has shown the two
-failures share a cause.
+race rather than that line.
+
+Second, the lead has ruled on point 3 and it is **not restored**. The attribution remains
+unresolved, the render race is a candidate explanation and an undemonstrated one, and the
+materiality question is **superseded rather than re-answered**: every known occurrence of
+the symptom sat in a configuration that is now either guarded — the gate carries
+render-waits — or is not any gate's configuration, the full parallel run. No claim of
+"immaterial" returns. The question simply has nothing left downstream of it, which is a
+different thing from having been answered.
+
+## Close-out — 2026-09-11
+
+The lead re-ran the G6 and G11 `done_when` blocks at the final tree: `mobile` 33/33 and
+`desktop` 32/32, both at `retries=0`. **The PR block is lifted by the lead**, PR #2 is
+open, and merge awaits Tor. That is the last line this release needs from the ledger.
 
 ## Note for whoever reconciles run logs against this file
 

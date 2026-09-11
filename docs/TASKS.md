@@ -1036,11 +1036,18 @@ neither lane, not that they fix anything. Denominators and the full account:
 `docs/TASKS-G11.md` § Fix.
 
 The third point of the `preventScroll` correction — that causation was immaterial because
-the failing configuration was no longer any gate's — was **withdrawn** when the symptom
-appeared at `--workers=1`. Whether the diagnosed render race reverses that withdrawal is
-the lead's call: it is a candidate explanation for the original parallel-run failure, not a
-demonstrated one. The retraction of the bisection claim stands regardless, since those
-comparisons were confounded whatever the cause turns out to be.
+the failing configuration was no longer any gate's — was withdrawn when the symptom appeared
+at `--workers=1`, and the lead has ruled it **not restored**. The attribution stays
+unresolved; the render race is a candidate explanation, undemonstrated; and the materiality
+question is superseded rather than re-answered, since every known occurrence sat in a
+configuration that is now either guarded by render-waits or is not any gate's. Nothing
+downstream depends on the answer, which is not the same as the answer being known. The
+retraction of the bisection claim stands regardless, since those comparisons were confounded
+whatever the cause turns out to be.
+
+**Released.** The lead re-ran the G6 and G11 `done_when` blocks at the final tree —
+`mobile` 33/33, `desktop` 32/32, both `retries=0` — and lifted the block. PR #2 is open;
+merge awaits Tor.
 
 `docs/TASKS-G11.md` also carries a reading note earned the hard way: the boxes are a ledger,
 not a status board, an unticked box means "not yet recorded" rather than "not yet done", and
