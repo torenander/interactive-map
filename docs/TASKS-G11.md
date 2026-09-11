@@ -214,18 +214,25 @@ What this does and does not change:
 - **No box is flipped.** Every mark above rests on the run it cites, and those runs were
   real and are not retroactively falsified by a later one failing. A ledger records what
   was observed, not what is currently believed.
-- **The done entry stands on the runs it cites**, and `docs/TASKS.md` now says a
-  subsequent sweep observed a failure, so the two cannot be read apart.
-- **G11's PR is blocked** until this is resolved.
-- **Investigation is open** — task #27, perf-probe measuring the rate and collecting
-  traces, draw-accuracy diagnosing.
-- **Point 3 of the `preventScroll` correction is withdrawn.** That point's whole argument
-  was that the failing configuration was no longer any gate's configuration. It now is.
+- **The done entry stands on the runs it cites**, and `docs/TASKS.md` carries this
+  observation inside it, so the two cannot be read apart.
+- **Point 3 of the `preventScroll` correction is withdrawn** (see above). That point's
+  whole argument was that the failing configuration was no longer any gate's
+  configuration. It was, at that moment.
 
-What it is not: evidence that `preventScroll` causes this. The retraction in point 2 holds
-— those comparisons were confounded — and one failure in seven runs is a rate, not a
-mechanism. The honest statement is that a symptom of this shape has now been seen where it
-matters, and nobody yet knows why.
+**Resolved — see "Fix" below.** Task #27 is closed and #28 landed the fix: a missing wait
+for the geojson source to re-tile before clicking saved geometry, so on a loaded machine
+the click beat the render and landed on nothing. Diagnosed in the code, not reproduced.
+The rate I first recorded here — "one in roughly seven" — was from incidental runs and is
+**superseded** by the three populations in that section, which are kept separate because
+they are not samples of one thing.
+
+Two things that survive the fix. First, this was never evidence that `preventScroll` causes
+anything: the retraction in point 2 held regardless, and the diagnosed cause is a test-side
+race rather than that line. Second, whether point 3's withdrawal should now be reversed is
+the lead's call, not mine — the diagnosed race is a candidate explanation for the original
+parallel-run failure too, but "candidate" is the honest word, and nobody has shown the two
+failures share a cause.
 
 ## Note for whoever reconciles run logs against this file
 

@@ -1023,12 +1023,24 @@ saved-area vertex drag, modal never appearing after the tap, at `--workers=1` wi
 Aggregate across `--workers=1` desktop runs is one real-test failure in roughly seven.
 
 This entry stands on the runs it cites, which were real; a later failure does not
-retroactively falsify them, and no box was flipped. But the two must be read together:
-G11's PR is blocked until this is resolved, investigation is open, and the third point of
-the `preventScroll` correction — that causation was immaterial because the failing
-configuration was no longer any gate's — is **withdrawn**, because it now is. The
-retraction of the bisection claim stands regardless: those comparisons were confounded
-whatever the cause turns out to be. One failure in seven is a rate, not a mechanism.
+retroactively falsify them, and no box was flipped.
+
+**Resolved 2026-09-11 — fixed on asymmetry, not reproduced.** Cause found in the code:
+`draw-precision` clicked a saved area with no wait for the geojson source to re-tile after
+the save, so on a loaded machine the click beat the render and landed on nothing, silently.
+`points-lines.spec.ts` carried seven such waits, added because it hit the race for real;
+`draw-precision` and `desktop.spec` had none. Fixed in 89e9a67 via `tests/e2e/rendered.ts`.
+The failure never reproduced on a quiet machine — 0/20 for `draw-precision` alone and 0/10
+for the full desktop project — so the six verification runs establish that the waits break
+neither lane, not that they fix anything. Denominators and the full account:
+`docs/TASKS-G11.md` § Fix.
+
+The third point of the `preventScroll` correction — that causation was immaterial because
+the failing configuration was no longer any gate's — was **withdrawn** when the symptom
+appeared at `--workers=1`. Whether the diagnosed render race reverses that withdrawal is
+the lead's call: it is a candidate explanation for the original parallel-run failure, not a
+demonstrated one. The retraction of the bisection claim stands regardless, since those
+comparisons were confounded whatever the cause turns out to be.
 
 `docs/TASKS-G11.md` also carries a reading note earned the hard way: the boxes are a ledger,
 not a status board, an unticked box means "not yet recorded" rather than "not yet done", and
