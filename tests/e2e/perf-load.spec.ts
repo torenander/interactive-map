@@ -8,8 +8,7 @@ import { test, expect } from '@playwright/test'
 
 type ResourceSnapshot = {
   workerFetches: number
-  workerStart: number | null
-  entryEnd: number | null
+  documentInitiated: boolean
 }
 
 test('no whole-archive download, and the worker is not serialized behind the app shell', async ({
@@ -75,30 +74,36 @@ test('no whole-archive download, and the worker is not serialized behind the app
     10_000_000,
   )
 
-  const { workerFetches, workerStart, entryEnd }: ResourceSnapshot = await page.evaluate(() => {
+  const { workerFetches, documentInitiated }: ResourceSnapshot = await page.evaluate(() => {
     const entries = performance.getEntriesByType('resource')
     const workers = entries.filter((entry) => entry.name.includes('maplibre-gl-worker'))
-    const entry = entries.find((resource) => /assets\/index-.*\.js$/.test(resource.name))
     return {
       workerFetches: workers.length,
-      workerStart: workers.length > 0 ? Math.round(workers[0].startTime) : null,
-      entryEnd: entry ? Math.round(entry.responseEnd) : null,
+      // vite.config.ts injects an inline head script that starts the worker fetch and
+      // parks the promise here; src/map/MapShell.tsx awaits it instead of issuing its
+      // own. Its presence is the document having initiated the fetch.
+      documentInitiated:
+        typeof (window as unknown as { __mapWorkerSource?: unknown }).__mapWorkerSource !==
+        'undefined',
     }
   })
 
-  expect(workerStart, 'maplibre-gl-worker was never fetched').not.toBeNull()
-  expect(entryEnd, 'entry chunk was never fetched').not.toBeNull()
-  // Exactly one fetch, not just an early one. A document preload that the
-  // application's own `fetch()` does not reuse would satisfy the ordering
-  // assertion below while quietly downloading the worker twice — measured at
-  // two entries starting 50ms and 84ms when the preload's credentials mode
-  // does not match. Announcing the worker and consuming that announcement are
-  // one change; this holds them together.
+  // The claim is that the worker fetch is started by the document rather than
+  // serialized behind the module graph — MapShell blocks the whole graph on resolving
+  // it, so without the document announcing it, the fetch cannot begin until the entry
+  // chunk has downloaded and evaluated. On the deployed build that gap was measured at
+  // hundreds of milliseconds: entry finished at 963ms, the worker ran 1082-1329ms, and
+  // the first tile range request only went out at 1820ms.
+  //
+  // This used to be asserted as `workerStart <= entryEnd`, which was the right idea
+  // measured the wrong way. On localhost both resources come from the service worker
+  // precache and land within a few milliseconds of each other, so the comparison was
+  // reading scheduling noise: it failed once at 11ms against 10ms. A one-millisecond
+  // inversion between two cache hits says nothing about whether the fetch was
+  // serialized. Assert the mechanism instead of a proxy for it.
+  expect(documentInitiated, 'the document did not start the worker fetch').toBe(true)
+  // Exactly one fetch, not just an early one: a document-initiated fetch that MapShell
+  // does not reuse would satisfy the check above while downloading the worker twice,
+  // which is what a <link rel=preload> did before this mechanism replaced it.
   expect(workerFetches, 'maplibre-gl-worker fetched more than once').toBe(1)
-  // The worker must be discoverable from the document rather than only from
-  // the evaluated module graph. src/map/MapShell.tsx blocks the whole app on
-  // resolving it (a load-bearing Vite 8 workaround — the map must never be
-  // created against an unresolved worker URL), so if the document does not
-  // announce it the fetch cannot start until the entry chunk has finished.
-  expect(workerStart as number).toBeLessThanOrEqual(entryEnd as number)
 })
