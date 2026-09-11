@@ -1016,6 +1016,20 @@ Three things worth surfacing here:
   reconstructed. Two clean `retries=0` mobile runs at 33/33 followed. Evidence of nothing,
   kept because an unexplained number that nobody can reconstruct is what quietly disappears.
 
+**Subsequent observation, 2026-09-11 — the desktop gate has since failed once.** The
+G1-G11 sweep at 58a3e22 passed G6-G10 and failed G11's desktop gate: `draw-precision`'s
+saved-area vertex drag, modal never appearing after the tap, at `--workers=1` with
+`retries=0` and the lock held — the gate's own configuration, not a contended one.
+Aggregate across `--workers=1` desktop runs is one real-test failure in roughly seven.
+
+This entry stands on the runs it cites, which were real; a later failure does not
+retroactively falsify them, and no box was flipped. But the two must be read together:
+G11's PR is blocked until this is resolved, investigation is open, and the third point of
+the `preventScroll` correction — that causation was immaterial because the failing
+configuration was no longer any gate's — is **withdrawn**, because it now is. The
+retraction of the bisection claim stands regardless: those comparisons were confounded
+whatever the cause turns out to be. One failure in seven is a rate, not a mechanism.
+
 `docs/TASKS-G11.md` also carries a reading note earned the hard way: the boxes are a ledger,
 not a status board, an unticked box means "not yet recorded" rather than "not yet done", and
 status comes from asking the owner rather than from the file, a free lock, or the branch.

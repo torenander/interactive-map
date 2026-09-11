@@ -94,11 +94,16 @@ runs did not support. Three points, which are the record:
    comparison varied configuration and the suspect line together — the line was present
    only in full parallel runs and absent only in isolated ones — so nothing was isolated.
    perf-probe later ran the missing cell (line unfixed, `--workers=1`, non-serial): green.
-3. **Causal attribution is unresolved and immaterial, per the lead.** The configuration
+3. ~~**Causal attribution is unresolved and immaterial, per the lead.** The configuration
    the failure appeared in — a full parallel two-project run — is no longer any gate's
    configuration now that the desktop lane is capped to `--workers=1`. No gate, no box and
    no shipped behaviour depends on the answer, so the decisive experiment is deliberately
-   not being run.
+   not being run.~~
+   **Withdrawn 2026-09-11** — see "Subsequent observation" below. The symptom has since
+   appeared at `--workers=1`, which *is* the gate's configuration, so the premise this
+   point rested on no longer holds. Causation is unresolved and now material. Points 1 and
+   2 are unaffected: the fix still stands on mechanism, and the bisection claim was
+   confounded whatever the answer turns out to be.
 
 Where the retracted wording stood: the comment at `src/areas/RatingModal.tsx:64` and
 cb80aaf's commit message. **The comment is fixed** — 3631262, comment-only, 3 insertions
@@ -195,6 +200,32 @@ above rest on a still tree. The lead's sequence out of it ran as ruled:
    authoritative one regardless.
 
 `src/*` is unfrozen as of step 2, with no further edits planned.
+
+## Subsequent observation — the desktop gate failed once, 2026-09-11
+
+The G1-G11 sweep at 58a3e22 passed G6-G10 and **failed G11's desktop gate once**:
+`draw-precision.spec.ts:270`, the saved-area vertex drag, where the modal never appeared
+after the tap. `--workers=1`, `retries=0`, lock held — the gate's own configuration, not a
+contended one. Across all `--workers=1` desktop runs to date the aggregate is **one
+real-test failure in roughly seven**.
+
+What this does and does not change:
+
+- **No box is flipped.** Every mark above rests on the run it cites, and those runs were
+  real and are not retroactively falsified by a later one failing. A ledger records what
+  was observed, not what is currently believed.
+- **The done entry stands on the runs it cites**, and `docs/TASKS.md` now says a
+  subsequent sweep observed a failure, so the two cannot be read apart.
+- **G11's PR is blocked** until this is resolved.
+- **Investigation is open** — task #27, perf-probe measuring the rate and collecting
+  traces, draw-accuracy diagnosing.
+- **Point 3 of the `preventScroll` correction is withdrawn.** That point's whole argument
+  was that the failing configuration was no longer any gate's configuration. It now is.
+
+What it is not: evidence that `preventScroll` causes this. The retraction in point 2 holds
+— those comparisons were confounded — and one failure in seven runs is a rate, not a
+mechanism. The honest statement is that a symptom of this shape has now been seen where it
+matters, and nobody yet knows why.
 
 ## Note for whoever reconciles run logs against this file
 
