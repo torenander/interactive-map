@@ -85,6 +85,20 @@ An unconditional `rmdir` on release is the same defect wearing different clothes
 stays harmless only for as long as acquisition is correct. Both halves are guarded here;
 do not reintroduce either by inlining "just three lines" into a new script.
 
+### What this constrains in CI
+
+The lock is not a courtesy about CPU. `dist/` is shared mutable state, and the e2e suite
+reads from the same directory the build writes — which is why two builds destroy each
+other rather than merely slowing each other down. The suite therefore assumes exclusive
+access to the machine *and* to `dist/`. That is a property to design around, not a bug to
+fix.
+
+The consequence: two CI jobs on one runner sharing a checkout cannot both run e2e. If that
+is ever attempted, it will present as flaky tests — a different test failing each time,
+never reproducible in isolation — rather than as a build collision, and cost somebody an
+afternoon chasing the tests instead of the runner. Give each concurrent job its own
+checkout, or serialize them.
+
 ## Commands
 
 ```bash
