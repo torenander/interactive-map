@@ -108,22 +108,64 @@ cycles inside and reaches `save-area`, Escape closes — were each measured; it 
 `preventScroll` rationale *inside* that work, not the box's assertions, that this
 correction touches. Box 8's `Enter` finding is likewise a measurement, not a deduction.
 
-### tests and config — perf-probe (task #26)
+### tests and config — perf-probe (commits 46732f1 project/spec/viewport, fc0a75c helper)
 
-- [ ] Derive `map-shell.spec.ts`'s two geometry assertions from the viewport (`:6` exact
+All three verified against 019f214 with `src` frozen at cb80aaf, under the e2e lock,
+released after each run.
+
+- [~] Derive `map-shell.spec.ts`'s two geometry assertions from the viewport (`:6` exact
       390x844, `:86` the `844 * 2/3` third)
-- [ ] Add the `desktop` project to `playwright.config.ts`; extract tap/click into a shared
+      → `! grep -q "844 \* (2 / 3)" tests/e2e/map-shell.spec.ts` exit 0; map-shell's 7
+      tests pass under both projects. The assertions now read `test.info().project.use`
+      and `page.viewportSize()`. The bottom-third claim was always a proportion — the
+      literal 844 made it mobile-only by accident.
+- [~] Add the `desktop` project to `playwright.config.ts`; extract tap/click into a shared
       input helper so the portable touch suites run under both
-- [ ] Write `tests/e2e/desktop.spec.ts`
+      → `--project=mobile` exit 0, 81 s, **33 passed** with no assertion edited — the
+      mobile-first gate on the record. `--project=desktop --workers=1` exit 0, 191 s,
+      **32 passed**. 45 locator taps and 27 coordinate taps converted across four suites;
+      the diff is tap calls, imports and comments and nothing else. Drags were left alone,
+      `page.mouse` already working under both input models. `touch-draw` is deliberately
+      out of the desktop project.
+- [~] Write `tests/e2e/desktop.spec.ts`
+      → six tests, and the red-first method is worth recording because the obvious version
+      of it lies. perf-probe's first run passed 6/6 — draw-accuracy's implementation was
+      already present uncommitted in this shared worktree, so the run was testing the
+      feature rather than the gate. Re-run in a throwaway worktree at their own commit,
+      where that work did not exist: **6 failed**. Serial mode then hid five of the six by
+      skipping after the first failure, so that throwaway copy was switched to non-serial
+      to make every assertion fail on its own merits. Worktree removed afterwards;
+      technique documented in `docs/TESTING.md`.
 
 ### close-out
 
-- [ ] Run every `done_when` command; record outputs.
-      Note the desktop line carries `--workers=1` as of the 2026-09-11 amendment in
+- [~] Run every `done_when` command; record outputs.
+      The desktop line carries `--workers=1` as of the 2026-09-11 amendment in
       `docs/OBJECTIVES.md` § G11 (perf-probe's measurements, lead-approved): five
-      consecutive single-worker runs were deterministic once the `perf-load` assertion
-      defect fixed in b46323d is excluded, against 3 and 2 failures at 5 and 2 workers.
-      Cost is 174-192 s against roughly 100 s.
+      consecutive single-worker runs deterministic once the `perf-load` assertion defect
+      fixed in b46323d is excluded, against 3 and 2 failures at 5 and 2 workers.
+      → perf-probe's watched run against 019f214, every command exit 0:
+
+      | Command | Exit | Result |
+      |---|---|---|
+      | `npm run build` | 0 | 19 s |
+      | `npm run test` | 0 | 12 s, 88 passed |
+      | `npm run test:e2e -- --project=mobile` | 0 | 81 s, 33 passed |
+      | `npm run test:e2e -- --project=desktop --workers=1` | 0 | 191 s, 32 passed |
+      | `grep -q "dragRotate.disable()" src/map/MapShell.tsx` | 0 | |
+      | `grep -q "touchPitch.disable()" src/map/MapShell.tsx` | 0 | |
+      | `grep -q 'data-testid="cancel-drawing"' src/map/MapShell.tsx` | 0 | |
+      | `grep -q "Escape" src/areas/RatingModal.tsx` | 0 | |
+      | `! grep -q "844 \* (2 / 3)" tests/e2e/map-shell.spec.ts` | 0 | |
+
+      191 s sits inside the 174-192 s band the amendment predicts, so the capped gate
+      behaves as measured.
+
+**Squaring the shas.** This run was against 019f214. The tree has since moved by 3631262,
+which is comment-only (3 insertions, 4 deletions, every changed line a `//`), and by
+documentation commits. Per the lead: a comment-only delta does not invalidate the
+behavioural results, and their own validation — run against 3631262 — is the authoritative
+one regardless.
 
 ---
 
