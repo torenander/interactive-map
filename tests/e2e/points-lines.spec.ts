@@ -6,12 +6,14 @@
 //
 // Runs at 390x844 (playwright.config.ts pins the only project there).
 //
-// Taps use page.touchscreen, as touch-draw.spec.ts and draw-precision.spec.ts do,
+// Taps go through tests/e2e/input.ts, which under the mobile project uses
+// page.touchscreen as touch-draw.spec.ts does,
 // because that is how the app is actually used.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { test, expect, type Page } from '@playwright/test'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { tap, tapAt } from './input'
 
 type PointGeometry = { type: 'Point'; coordinates: number[] }
 type LineGeometry = { type: 'LineString'; coordinates: number[][] }
@@ -113,11 +115,11 @@ async function waitForMap(page: Page) {
 async function signIn(page: Page) {
   await page.goto('/')
   await waitForMap(page)
-  await page.getByTestId('open-sign-in').tap()
+  await tap(page.getByTestId('open-sign-in'))
   const form = page.getByTestId('sign-in-form')
   await form.getByLabel('Email').fill(email)
   await form.getByLabel('Password').fill(password)
-  await form.getByRole('button', { name: 'Sign in' }).tap()
+  await tap(form.getByRole('button', { name: 'Sign in' }))
   await expect(page.getByTestId('open-sign-in')).toBeHidden()
 }
 
@@ -211,9 +213,9 @@ async function pageXYOf(page: Page, coordinate: number[]) {
 // that starts it and the taps in between differ.
 async function rateAndSave(page: Page, rating: -1 | 0 | 1, comment: string) {
   await expect(page.getByTestId('rating-modal')).toBeVisible()
-  await page.getByTestId(`rating-${rating}`).tap()
+  await tap(page.getByTestId(`rating-${rating}`))
   await page.getByTestId('comment-input').fill(comment)
-  await page.getByTestId('save-area').tap()
+  await tap(page.getByTestId('save-area'))
   await expect(page.getByTestId('rating-modal')).toBeHidden()
 }
 
@@ -229,9 +231,9 @@ test('a point round-trips: place, rate, reload, edit, reload, delete, gone', asy
   const origin = await canvasOrigin(page)
   const spot = { x: origin.x + origin.width / 2, y: origin.y + origin.height / 2 - 60 }
 
-  await page.getByTestId('start-point').tap()
+  await tap(page.getByTestId('start-point'))
   await expect(page.getByTestId('point-hint')).toBeVisible()
-  await page.touchscreen.tap(spot.x, spot.y)
+  await tapAt(page, spot.x, spot.y)
   await rateAndSave(page, 1, 'good corner shop')
 
   let saved = await storedFeatures()
@@ -251,7 +253,7 @@ test('a point round-trips: place, rate, reload, edit, reload, delete, gone', asy
   expect(Math.abs(back.y - spot.y)).toBeLessThan(2)
 
   // Tap it to edit the rating.
-  await page.touchscreen.tap(back.x, back.y)
+  await tapAt(page, back.x, back.y)
   await expect(page.getByTestId('rating-modal')).toBeVisible()
   await expect(page.getByTestId('comment-input')).toHaveValue('good corner shop')
   await settleSheet(page)
@@ -267,10 +269,10 @@ test('a point round-trips: place, rate, reload, edit, reload, delete, gone', asy
 
   // Delete it.
   const stillThere = await pageXYOf(page, placed)
-  await page.touchscreen.tap(stillThere.x, stillThere.y)
+  await tapAt(page, stillThere.x, stillThere.y)
   await expect(page.getByTestId('rating-modal')).toBeVisible()
   await settleSheet(page)
-  await page.getByTestId('delete-area').tap()
+  await tap(page.getByTestId('delete-area'))
   await expect(page.getByTestId('rating-modal')).toBeHidden()
 
   await page.reload()
@@ -290,12 +292,12 @@ test('a line round-trips: draw, rate, reload, edit, reload, delete, gone', async
     { x: cx + 80, y: cy - 60 },
   ]
 
-  await page.getByTestId('start-line').tap()
+  await tap(page.getByTestId('start-line'))
   for (const vertex of vertices) {
-    await page.touchscreen.tap(vertex.x, vertex.y)
+    await tapAt(page, vertex.x, vertex.y)
   }
   // Closed by the explicit control, not by a tap on the last vertex.
-  await page.getByTestId('finish-line').tap()
+  await tap(page.getByTestId('finish-line'))
   await rateAndSave(page, -1, 'noisy stretch')
 
   let saved = await storedFeatures()
@@ -319,7 +321,7 @@ test('a line round-trips: draw, rate, reload, edit, reload, delete, gone', async
   // Tapping the stroke opens it — the middle vertex is the easiest place to be sure the
   // tap is on the line and not near an end.
   const onLine = await pageXYOf(page, drawn[1])
-  await page.touchscreen.tap(onLine.x, onLine.y)
+  await tapAt(page, onLine.x, onLine.y)
   await expect(page.getByTestId('rating-modal')).toBeVisible()
   await expect(page.getByTestId('comment-input')).toHaveValue('noisy stretch')
   await settleSheet(page)
@@ -334,10 +336,10 @@ test('a line round-trips: draw, rate, reload, edit, reload, delete, gone', async
   expect(saved[0].comment).toBe('quietened down')
 
   const again = await pageXYOf(page, drawn[1])
-  await page.touchscreen.tap(again.x, again.y)
+  await tapAt(page, again.x, again.y)
   await expect(page.getByTestId('rating-modal')).toBeVisible()
   await settleSheet(page)
-  await page.getByTestId('delete-area').tap()
+  await tap(page.getByTestId('delete-area'))
   await expect(page.getByTestId('rating-modal')).toBeHidden()
 
   await page.reload()
@@ -355,22 +357,22 @@ test('a point inside a rated area stays tappable, and the area stays tappable ar
   const cy = origin.y + origin.height / 2
 
   // A rated area first, large enough to contain a point with room to spare.
-  await page.getByTestId('start-drawing').tap()
+  await tap(page.getByTestId('start-drawing'))
   for (const vertex of [
     { x: cx - 110, y: cy - 110 },
     { x: cx + 110, y: cy - 110 },
     { x: cx + 110, y: cy + 30 },
     { x: cx - 110, y: cy + 30 },
   ]) {
-    await page.touchscreen.tap(vertex.x, vertex.y)
+    await tapAt(page, vertex.x, vertex.y)
   }
-  await page.getByTestId('finish-area').tap()
+  await tap(page.getByTestId('finish-area'))
   await rateAndSave(page, 1, 'area note')
 
   // Then a point well inside it.
   const inside = { x: cx, y: cy - 40 }
-  await page.getByTestId('start-point').tap()
-  await page.touchscreen.tap(inside.x, inside.y)
+  await tap(page.getByTestId('start-point'))
+  await tapAt(page, inside.x, inside.y)
   await rateAndSave(page, -1, 'point note')
 
   await page.reload()
@@ -383,20 +385,20 @@ test('a point inside a rated area stays tappable, and the area stays tappable ar
 
   // Tapping the point opens the POINT, not the area underneath it. Which one the sheet
   // is showing is read off the comment: the two were deliberately given different ones.
-  await page.touchscreen.tap(pointXY.x, pointXY.y)
+  await tapAt(page, pointXY.x, pointXY.y)
   await expect(page.getByTestId('rating-modal')).toBeVisible()
   await expect(page.getByTestId('comment-input')).toHaveValue('point note')
 
   // Back out without saving, so the area tap below starts from a clean slate.
   await settleSheet(page)
-  await page.touchscreen.tap(cx, origin.y + 40) // backdrop
+  await tapAt(page, cx, origin.y + 40) // backdrop
   await expect(page.getByTestId('rating-modal')).toBeHidden()
-  await page.getByTestId('cancel-edit').tap()
+  await tap(page.getByTestId('cancel-edit'))
 
   // And the area is still tappable everywhere the point is not — precedence takes the
   // tap from the area only where a feature actually is.
   const awayFromPoint = { x: cx - 80, y: cy + 10 }
-  await page.touchscreen.tap(awayFromPoint.x, awayFromPoint.y)
+  await tapAt(page, awayFromPoint.x, awayFromPoint.y)
   await expect(page.getByTestId('rating-modal')).toBeVisible()
   await expect(page.getByTestId('comment-input')).toHaveValue('area note')
 })
@@ -426,8 +428,8 @@ test('a point saved with the network blocked queues, renders as queued, then flu
 
   const origin = await canvasOrigin(page)
   const spot = { x: origin.x + origin.width / 2, y: origin.y + origin.height / 2 - 50 }
-  await page.getByTestId('start-point').tap()
-  await page.touchscreen.tap(spot.x, spot.y)
+  await tap(page.getByTestId('start-point'))
+  await tapAt(page, spot.x, spot.y)
   await rateAndSave(page, 1, 'placed underground')
 
   // Queued, not saved. CLAUDE.md: never render a save as complete before the server has
@@ -501,22 +503,22 @@ test('the queued banner names both kinds when an area and a feature are queued t
   const cx = origin.x + origin.width / 2
   const cy = origin.y + origin.height / 2
 
-  await page.getByTestId('start-drawing').tap()
+  await tap(page.getByTestId('start-drawing'))
   for (const vertex of [
     { x: cx - 90, y: cy - 100 },
     { x: cx + 90, y: cy - 100 },
     { x: cx + 90, y: cy - 20 },
     { x: cx - 90, y: cy - 20 },
   ]) {
-    await page.touchscreen.tap(vertex.x, vertex.y)
+    await tapAt(page, vertex.x, vertex.y)
   }
-  await page.getByTestId('finish-area').tap()
+  await tap(page.getByTestId('finish-area'))
   await rateAndSave(page, 1, 'area underground')
 
   await expect(page.getByTestId('queued-banner')).toContainText('1 area queued')
 
-  await page.getByTestId('start-point').tap()
-  await page.touchscreen.tap(cx, cy + 40)
+  await tap(page.getByTestId('start-point'))
+  await tapAt(page, cx, cy + 40)
   await rateAndSave(page, -1, 'point underground')
 
   // Both kinds named, rather than totalled into a number that says neither.

@@ -7,12 +7,14 @@
 // On input: drags use page.mouse.move/down/up, the same choice and for the same reason
 // as tests/e2e/draw-precision.spec.ts — the app listens for pointerdown/pointermove/
 // pointerup, which is what WebKit synthesises from touch, and Playwright's touchscreen
-// API can tap but cannot drag. Taps that do not need a path use page.touchscreen.tap, so
+// API can tap but cannot drag. Taps that do not need a path go through
+// tests/e2e/input.ts (page.touchscreen.tap under the mobile project), so
 // the genuine touch path is exercised too.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { test, expect, type Page } from '@playwright/test'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { tap, tapAt } from './input'
 
 function readLocalSupabaseEnv(): Record<string, string> {
   const raw = execFileSync('npx', ['supabase', 'status', '-o', 'env'], {
@@ -61,11 +63,11 @@ async function signIn(page: Page) {
     return !!map && map.isStyleLoaded()
   })
 
-  await page.getByTestId('open-sign-in').tap()
+  await tap(page.getByTestId('open-sign-in'))
   const form = page.getByTestId('sign-in-form')
   await form.getByLabel('Email').fill(email)
   await form.getByLabel('Password').fill(password)
-  await form.getByRole('button', { name: 'Sign in' }).tap()
+  await tap(form.getByRole('button', { name: 'Sign in' }))
   await expect(page.getByTestId('open-sign-in')).toBeHidden()
 }
 
@@ -102,7 +104,7 @@ async function canvasCentre(page: Page) {
  * makes the rest of a test deterministic instead of racing that fetch.
  */
 async function startBrush(page: Page) {
-  await page.getByTestId('start-brush').tap()
+  await tap(page.getByTestId('start-brush'))
   await expect(page.getByTestId('exit-brush')).toBeVisible()
 }
 
@@ -141,9 +143,9 @@ test('painting an area: drag paints, release rates, save derives cells', async (
   // Still not a saved area: nothing has been submitted yet.
   expect(await renderedCount(page, 'saved-areas-fill')).toBe(0)
 
-  await page.getByTestId('rating-1').tap()
+  await tap(page.getByTestId('rating-1'))
   await page.getByTestId('comment-input').fill('Painted this block')
-  await page.getByTestId('save-area').tap()
+  await tap(page.getByTestId('save-area'))
   await expect(page.getByTestId('rating-modal')).toBeHidden()
 
   // One row, and area_cells derived from the polygon the brush synthesised. The cells
@@ -201,13 +203,13 @@ test('erase clears what it covers, and undo brings the stroke back', async ({ pa
 
   // Paint one stamp, then get the sheet out of the way — dismissing keeps the paint
   // (SPEC.md § Field UX) and is the only way back to the map.
-  await page.touchscreen.tap(spot.x, spot.y)
+  await tapAt(page, spot.x, spot.y)
   await expect(page.getByTestId('rating-modal')).toBeVisible()
   // Dismiss with the sheet's own close control rather than the backdrop: the backdrop
   // ignores clicks within 50ms of mount (RatingModal's WebKit ghost-click guard), which
   // makes a backdrop tap here a race against the assertion above rather than a test of
   // anything this suite is about. tests/e2e/touch-draw.spec.ts covers the backdrop path.
-  await page.getByRole('button', { name: 'Close' }).tap()
+  await tap(page.getByRole('button', { name: 'Close' }))
   await expect(page.getByTestId('rating-modal')).toBeHidden()
   await expect.poll(() => renderedCount(page, 'brush-selection-fill')).toBeGreaterThan(0)
   const painted = await paintedCells(page)
@@ -215,17 +217,17 @@ test('erase clears what it covers, and undo brings the stroke back', async ({ pa
 
   // Erase over the same spot with the widest brush: the selection empties, so there is
   // nothing left to rate and the sheet stays shut.
-  await page.getByTestId('brush-erase-toggle').tap()
+  await tap(page.getByTestId('brush-erase-toggle'))
   await expect(page.getByTestId('brush-erase-toggle')).toHaveAttribute('aria-pressed', 'true')
-  await page.getByTestId('brush-size-3').tap()
-  await page.touchscreen.tap(spot.x, spot.y)
+  await tap(page.getByTestId('brush-size-3'))
+  await tapAt(page, spot.x, spot.y)
   await expect.poll(() => renderedCount(page, 'brush-selection-fill')).toBe(0)
   expect(await paintedCells(page)).toEqual([])
   await expect(page.getByTestId('rating-modal')).toBeHidden()
 
   // Undo the erase stroke: exactly the cells it removed come back — not approximately,
   // and not the whole session — and the selection is saveable again.
-  await page.getByTestId('undo-stroke').tap()
+  await tap(page.getByTestId('undo-stroke'))
   await expect.poll(() => renderedCount(page, 'brush-selection-fill')).toBeGreaterThan(0)
   expect([...(await paintedCells(page))].sort()).toEqual([...painted].sort())
   await expect(page.getByTestId('reopen-pending')).toBeVisible()
@@ -239,15 +241,15 @@ test('paint in separate pieces is refused until the gap is closed', async ({ pag
   const left = { x: cx - 90, y: cy - 40 }
   const right = { x: cx + 90, y: cy - 40 }
 
-  await page.touchscreen.tap(left.x, left.y)
+  await tapAt(page, left.x, left.y)
   await expect(page.getByTestId('rating-modal')).toBeVisible()
-  await page.getByRole('button', { name: 'Close' }).tap() // see the note in the erase test
+  await tap(page.getByRole('button', { name: 'Close' })) // see the note in the erase test
   await expect(page.getByTestId('rating-modal')).toBeHidden()
 
   // A second stamp with a gap between it and the first cannot be one polygon. The paint
   // stays on screen and the message says so; the sheet does not open on a shape that
   // cannot be saved.
-  await page.touchscreen.tap(right.x, right.y)
+  await tapAt(page, right.x, right.y)
   await expect(page.getByTestId('brush-message')).toBeVisible()
   await expect(page.getByTestId('brush-message')).toContainText('separate pieces')
   await expect(page.getByTestId('rating-modal')).toBeHidden()

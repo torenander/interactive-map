@@ -5,7 +5,8 @@
 //
 // Runs at 390x844 (playwright.config.ts pins the only project there).
 //
-// On input: taps use page.touchscreen, as touch-draw.spec.ts does, because that is how
+// On input: taps go through tests/e2e/input.ts, which uses page.touchscreen under the
+// mobile project — as touch-draw.spec.ts does — because that is how
 // the app is actually used. Drags use page.mouse — Terra Draw's adapter listens for
 // pointerdown/pointermove/pointerup (not touch events), which the engine synthesises from
 // mouse input, and Playwright has no multi-step touch-drag primitive.
@@ -14,6 +15,7 @@ import { randomUUID } from 'node:crypto'
 import { test, expect, type Page } from '@playwright/test'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { polygonToCells } from 'h3-js'
+import { tap, tapAt } from './input'
 
 // Must match supabase/functions/save-area/index.ts.
 const H3_RESOLUTION = 10
@@ -109,11 +111,11 @@ async function signIn(page: Page) {
     return !!map && map.isStyleLoaded()
   })
 
-  await page.getByTestId('open-sign-in').tap()
+  await tap(page.getByTestId('open-sign-in'))
   const form = page.getByTestId('sign-in-form')
   await form.getByLabel('Email').fill(email)
   await form.getByLabel('Password').fill(password)
-  await form.getByRole('button', { name: 'Sign in' }).tap()
+  await tap(form.getByRole('button', { name: 'Sign in' }))
   await expect(page.getByTestId('open-sign-in')).toBeHidden()
 }
 
@@ -180,8 +182,8 @@ function drawSnapshot(page: Page) {
 }
 
 async function saveWithRating(page: Page, rating: -1 | 0 | 1) {
-  await page.getByTestId(`rating-${rating}`).tap()
-  await page.getByTestId('save-area').tap()
+  await tap(page.getByTestId(`rating-${rating}`))
+  await tap(page.getByTestId('save-area'))
   await expect(page.getByTestId('rating-modal')).toBeHidden()
 }
 
@@ -189,7 +191,7 @@ test('every placed vertex gets a handle, and Finish area closes the ring where t
   page,
 }) => {
   await signIn(page)
-  await page.getByTestId('start-drawing').tap()
+  await tap(page.getByTestId('start-drawing'))
 
   const origin = await canvasOrigin(page)
   const cx = origin.x + origin.width / 2
@@ -203,7 +205,7 @@ test('every placed vertex gets a handle, and Finish area closes the ring where t
     { x: cx - 70, y: cy + 10 },
   ]
   for (const vertex of vertices) {
-    await page.touchscreen.tap(vertex.x, vertex.y)
+    await tapAt(page, vertex.x, vertex.y)
   }
 
   // Before G6 only the two closingPoint markers rendered, however many vertices had been
@@ -237,7 +239,7 @@ test('every placed vertex gets a handle, and Finish area closes the ring where t
     expected.push(await lngLatOf(page, vertex.x, vertex.y))
   }
 
-  await page.getByTestId('finish-area').tap()
+  await tap(page.getByTestId('finish-area'))
   await expect(page.getByTestId('rating-modal')).toBeVisible()
   await saveWithRating(page, 1)
 
@@ -269,7 +271,7 @@ test('a vertex of a saved area can be dragged, and the saved outline and its cel
   page,
 }) => {
   await signIn(page)
-  await page.getByTestId('start-drawing').tap()
+  await tap(page.getByTestId('start-drawing'))
 
   const origin = await canvasOrigin(page)
   const cx = origin.x + origin.width / 2
@@ -280,9 +282,9 @@ test('a vertex of a saved area can be dragged, and the saved outline and its cel
     { x: cx + 70, y: cy + 10 },
     { x: cx - 70, y: cy + 10 },
   ]) {
-    await page.touchscreen.tap(vertex.x, vertex.y)
+    await tapAt(page, vertex.x, vertex.y)
   }
-  await page.getByTestId('finish-area').tap()
+  await tap(page.getByTestId('finish-area'))
   await saveWithRating(page, 1)
 
   const [before] = await fetchGeometries()
@@ -290,13 +292,13 @@ test('a vertex of a saved area can be dragged, and the saved outline and its cel
 
   // Reopen the saved area. The sheet's backdrop covers the map, so dismissing it is how
   // the vertex handles become reachable at all.
-  await page.touchscreen.tap(cx, cy - 40)
+  await tapAt(page, cx, cy - 40)
   await expect(page.getByTestId('rating-modal')).toBeVisible()
   // RatingModal deliberately ignores any click within 50ms of mount — that is the WebKit
   // ghost-click guard (docs/TASKS-FIX-TOUCH.md), and toBeVisible can resolve inside that
   // window. Wait it out so this taps the settled backdrop, as a user would.
   await page.waitForTimeout(200)
-  await page.touchscreen.tap(origin.x + origin.width / 2, origin.y + 40) // backdrop
+  await tapAt(page, origin.x + origin.width / 2, origin.y + 40) // backdrop
   await expect(page.getByTestId('rating-modal')).toBeHidden()
   await expect(page.getByTestId('reopen-pending')).toBeVisible()
 
@@ -307,7 +309,7 @@ test('a vertex of a saved area can be dragged, and the saved outline and its cel
   await dragOnCanvas(page, handle, target)
   const movedTo = await lngLatOf(page, target.x, target.y)
 
-  await page.getByTestId('reopen-pending').tap()
+  await tap(page.getByTestId('reopen-pending'))
   await expect(page.getByTestId('rating-modal')).toBeVisible()
   await saveWithRating(page, 1)
 
@@ -355,7 +357,7 @@ test('a vertex of a saved area can be dragged, and the saved outline and its cel
 
 test('a vertex dropped near a saved border snaps onto that exact coordinate', async ({ page }) => {
   await signIn(page)
-  await page.getByTestId('start-drawing').tap()
+  await tap(page.getByTestId('start-drawing'))
 
   const origin = await canvasOrigin(page)
   const cx = origin.x + origin.width / 2
@@ -366,9 +368,9 @@ test('a vertex dropped near a saved border snaps onto that exact coordinate', as
     { x: cx + 10, y: cy - 10 },
     { x: cx - 90, y: cy - 10 },
   ]) {
-    await page.touchscreen.tap(vertex.x, vertex.y)
+    await tapAt(page, vertex.x, vertex.y)
   }
-  await page.getByTestId('finish-area').tap()
+  await tap(page.getByTestId('finish-area'))
   await saveWithRating(page, 1)
 
   const [first] = await fetchGeometries()
@@ -376,14 +378,14 @@ test('a vertex dropped near a saved border snaps onto that exact coordinate', as
   const shared = first.geometry.coordinates[0][2]
   const sharedXY = await pageXYOf(page, shared)
 
-  await page.getByTestId('start-drawing').tap()
+  await tap(page.getByTestId('start-drawing'))
   // Deliberately off-target by less than the snap radius — the kind of miss a thumb makes.
   const offBy = Math.round(SNAP_PIXEL_DISTANCE / 2)
-  await page.touchscreen.tap(sharedXY.x + offBy, sharedXY.y + offBy)
-  await page.touchscreen.tap(sharedXY.x + 100, sharedXY.y + 10)
-  await page.touchscreen.tap(sharedXY.x + 100, sharedXY.y + 90)
-  await page.touchscreen.tap(sharedXY.x + 10, sharedXY.y + 90)
-  await page.getByTestId('finish-area').tap()
+  await tapAt(page, sharedXY.x + offBy, sharedXY.y + offBy)
+  await tapAt(page, sharedXY.x + 100, sharedXY.y + 10)
+  await tapAt(page, sharedXY.x + 100, sharedXY.y + 90)
+  await tapAt(page, sharedXY.x + 10, sharedXY.y + 90)
+  await tap(page.getByTestId('finish-area'))
   await saveWithRating(page, -1)
 
   const geometries = await fetchGeometries()

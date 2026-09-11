@@ -8,6 +8,7 @@
 // No sign-in: overlays are reference data, not user data, and nothing here touches
 // Supabase.
 import { test, expect, type Page } from '@playwright/test'
+import { tap, tapAt } from './input'
 
 const ATTRIB = '.maplibregl-ctrl-attrib'
 
@@ -45,9 +46,9 @@ function layerIndex(page: Page, layer: string) {
 }
 
 async function enable(page: Page, id: string) {
-  await page.getByTestId('overlay-sheet-toggle').tap()
+  await tap(page.getByTestId('overlay-sheet-toggle'))
   await expect(page.getByTestId('overlay-sheet')).toBeVisible()
-  await page.getByTestId(`overlay-toggle-${id}`).tap()
+  await tap(page.getByTestId(`overlay-toggle-${id}`))
   await expect(page.getByTestId(`overlay-toggle-${id}`)).toHaveAttribute('aria-pressed', 'true')
 }
 
@@ -74,7 +75,7 @@ test('enabling an overlay paints it and credits its source; disabling removes bo
     await layerIndex(page, 'saved-areas-fill'),
   )
 
-  await page.getByTestId('overlay-toggle-tfl-stops').tap()
+  await tap(page.getByTestId('overlay-toggle-tfl-stops'))
   await expect(page.getByTestId('overlay-toggle-tfl-stops')).toHaveAttribute(
     'aria-pressed',
     'false',
@@ -96,7 +97,7 @@ test('a toggled-on overlay is still on after a reload', async ({ page }) => {
   await expect.poll(() => renderedCount(page, 'greenspace-fill'), { timeout: 20_000 })
     .toBeGreaterThan(0)
   await expect(page.locator(ATTRIB)).toContainText('Crown copyright')
-  await page.getByTestId('overlay-sheet-toggle').tap()
+  await tap(page.getByTestId('overlay-sheet-toggle'))
   await expect(page.getByTestId('overlay-toggle-greenspace')).toHaveAttribute(
     'aria-pressed',
     'true',
@@ -121,7 +122,7 @@ test('toggling overlays sends no request off this origin', async ({ page, baseUR
   await enable(page, 'road-noise')
   await expect.poll(() => renderedCount(page, 'road-noise-fill'), { timeout: 20_000 })
     .toBeGreaterThan(0)
-  await page.getByTestId('overlay-toggle-road-noise').tap()
+  await tap(page.getByTestId('overlay-toggle-road-noise'))
   await expect.poll(() => renderedCount(page, 'road-noise-fill')).toBe(0)
 
   expect(offOrigin).toEqual([])
