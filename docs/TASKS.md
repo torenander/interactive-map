@@ -799,15 +799,46 @@ idempotency.
 
 ---
 
-# G6–G10 — planned, not started
+# G6 — Drawing precision — done 2026-09-11
 
-Goal blocks: `docs/OBJECTIVES.md` § G6–G10. Task breakdowns live in their own files,
+Task breakdown: `docs/TASKS-G6.md` (teammate draw-accuracy).
+
+All ten `done_when` entries exit 0, re-run independently by the lead after the
+teammate's own run: the five grep probes, `npm run build`, the unit suite (28 tests),
+and the three e2e suites — `draw-precision` 3/3, plus the `touch-draw` and `mvp-loop`
+regression gates 1/1 each. No check was rewritten or weakened to get there.
+
+Design notes: `TerraDrawPolygonMode` gains `showCoordinatePoints`, `editable` and
+`pointerDistance` 20 — closing the ring no longer depends on hitting a 40px target,
+because an explicit "Finish area" control closes it outright (Terra Draw has no public
+`finish()`; the button dispatches the mode's finish key at the map canvas). A
+`TerraDrawSelectMode` holds any finished polygon — a fresh draw or a reopened saved
+area — with draggable vertex and midpoint handles; polygon mode cannot, since a tap on
+empty map would start a second polygon. The `finish` handler's old
+`action !== 'draw'` early return is gone, so a dragged vertex now reaches `save-area`
+and `area_cells` is rebuilt from the new outline (asserted against `h3-js`).
+
+Snapping to existing borders is `snapping.toCustom` (`src/map/snapping.ts`), not the
+built-in `toCoordinate`/`toLine`: those only see Terra Draw's own store, and saved areas
+render from the `saved-areas` GeoJSON source, so the built-ins would have snapped to
+nothing. Vertex snapping only — G9-style segment snapping would produce an interpolated
+coordinate equal to nothing, and the point of snapping here is a shared border
+coordinate. It remains an input-side concern: nothing unions, clips or repairs geometry
+(docs/ARCHITECTURE.md § "No geometry union").
+
+One UX consequence worth knowing: dismissing the rating sheet now *keeps* an edit
+session open (with a new "Cancel edit" control) rather than discarding it. The sheet's
+backdrop covers the whole map, so clearing the session on dismiss would have made
+dragging a saved area's vertex impossible.
+
+---
+
+# G7–G10 — planned
+
+Goal blocks: `docs/OBJECTIVES.md` § G7–G10. Task breakdowns live in their own files,
 per the G2–G5 convention:
 
-- `docs/TASKS-G6.md` — Drawing precision (blocked by G3, G4)
 - `docs/TASKS-G7.md` — Load performance (blocked by G5)
 - `docs/TASKS-G8.md` — Brush painting of H3 cells (blocked by G3, G6)
 - `docs/TASKS-G9.md` — Point and line features (blocked by G3, G4, G6)
 - `docs/TASKS-G10.md` — Open data overlays (blocked by G5, G9)
-
-No task in these files has been started; every box is `[ ]`.
