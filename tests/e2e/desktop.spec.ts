@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto'
 import { test, expect, type Page } from '@playwright/test'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { tap, tapAt } from './input'
+import { SAVED_AREAS_FILL, waitForRenderedFeatures } from './rendered'
 
 function readLocalSupabaseEnv(): Record<string, string> {
   const raw = execFileSync('npx', ['supabase', 'status', '-o', 'env'], {
@@ -220,6 +221,11 @@ test('the cursor says what is clickable', async ({ page }) => {
   await tap(page.getByTestId('rating-1'))
   await tap(page.getByTestId('save-area'))
   await expect(page.getByTestId('rating-modal')).toBeHidden()
+
+  // Same race as draw-precision's reopen tap: the hover has to land on a rendered
+  // feature for MapLibre's hit test to report one, and the source re-tiles after the
+  // save. This suite had no such wait and had simply not been unlucky yet.
+  await waitForRenderedFeatures(page, SAVED_AREAS_FILL)
 
   const origin = await canvasOrigin(page)
   const inside = { x: origin.x + origin.width / 2, y: origin.y + origin.height / 2 - 20 }

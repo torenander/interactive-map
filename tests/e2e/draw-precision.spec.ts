@@ -16,6 +16,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { polygonToCells } from 'h3-js'
 import { tap, tapAt } from './input'
+import { SAVED_AREAS_FILL, waitForRenderedFeatures } from './rendered'
 
 // Must match supabase/functions/save-area/index.ts.
 const H3_RESOLUTION = 10
@@ -292,6 +293,13 @@ test('a vertex of a saved area can be dragged, and the saved outline and its cel
 
   // Reopen the saved area. The sheet's backdrop covers the map, so dismissing it is how
   // the vertex handles become reachable at all.
+  //
+  // The wait is load-bearing: this tap has to hit the saved-areas fill through
+  // MapLibre's hit test, and the source re-tiles asynchronously after the save. With
+  // only a DB round trip between save and click, a busy machine lets the click win and
+  // land on nothing — the sheet never opens and there is no error to show for it. See
+  // tests/e2e/rendered.ts.
+  await waitForRenderedFeatures(page, SAVED_AREAS_FILL)
   await tapAt(page, cx, cy - 40)
   await expect(page.getByTestId('rating-modal')).toBeVisible()
   // RatingModal deliberately ignores any click within 50ms of mount — that is the WebKit
