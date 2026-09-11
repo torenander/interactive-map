@@ -79,13 +79,21 @@ test.beforeEach(async () => {
 // makes it do the ST_AsGeoJSON conversion server side, the same trick src/db/client.ts
 // uses to read areas back without a WKB parser.
 async function fetchGeometries(): Promise<{ id: string; geometry: Polygon }[]> {
-  const res = await fetch(`${apiUrl}/rest/v1/areas?select=id,geom&order=created_at.asc`, {
-    headers: {
-      apikey: serviceKey,
-      Authorization: `Bearer ${serviceKey}`,
-      Accept: 'application/geo+json',
+  // Scoped to this suite's own user. Unscoped, this read returns every row in `areas`,
+  // including rows a suite running in parallel has saved and not yet cleaned up — which
+  // turned tests/e2e/brush.spec.ts saving one area into a failure here (it counted 2
+  // geometries where it expects its own 1). Each suite creates its own user in
+  // beforeAll, so filtering on it is exactly the isolation the assertions assume.
+  const res = await fetch(
+    `${apiUrl}/rest/v1/areas?select=id,geom&user_id=eq.${userId}&order=created_at.asc`,
+    {
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        Accept: 'application/geo+json',
+      },
     },
-  })
+  )
   if (!res.ok) throw new Error(`read areas failed: ${res.status} ${await res.text()}`)
   const body = (await res.json()) as {
     features: { properties: { id: string }; geometry: Polygon }[]
