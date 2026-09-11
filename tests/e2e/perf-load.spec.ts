@@ -6,7 +6,11 @@ import { test, expect } from '@playwright/test'
 // laptop. See docs/OBJECTIVES.md § G7 and docs/TASKS-G7.md for the measured
 // baselines that justify them.
 
-type ResourceSnapshot = { workerStart: number | null; entryEnd: number | null }
+type ResourceSnapshot = {
+  workerFetches: number
+  workerStart: number | null
+  entryEnd: number | null
+}
 
 test('no whole-archive download, and the worker is not serialized behind the app shell', async ({
   page,
@@ -71,18 +75,26 @@ test('no whole-archive download, and the worker is not serialized behind the app
     10_000_000,
   )
 
-  const { workerStart, entryEnd }: ResourceSnapshot = await page.evaluate(() => {
+  const { workerFetches, workerStart, entryEnd }: ResourceSnapshot = await page.evaluate(() => {
     const entries = performance.getEntriesByType('resource')
-    const worker = entries.find((entry) => entry.name.includes('maplibre-gl-worker'))
+    const workers = entries.filter((entry) => entry.name.includes('maplibre-gl-worker'))
     const entry = entries.find((resource) => /assets\/index-.*\.js$/.test(resource.name))
     return {
-      workerStart: worker ? Math.round(worker.startTime) : null,
+      workerFetches: workers.length,
+      workerStart: workers.length > 0 ? Math.round(workers[0].startTime) : null,
       entryEnd: entry ? Math.round(entry.responseEnd) : null,
     }
   })
 
   expect(workerStart, 'maplibre-gl-worker was never fetched').not.toBeNull()
   expect(entryEnd, 'entry chunk was never fetched').not.toBeNull()
+  // Exactly one fetch, not just an early one. A document preload that the
+  // application's own `fetch()` does not reuse would satisfy the ordering
+  // assertion below while quietly downloading the worker twice — measured at
+  // two entries starting 50ms and 84ms when the preload's credentials mode
+  // does not match. Announcing the worker and consuming that announcement are
+  // one change; this holds them together.
+  expect(workerFetches, 'maplibre-gl-worker fetched more than once').toBe(1)
   // The worker must be discoverable from the document rather than only from
   // the evaluated module graph. src/map/MapShell.tsx blocks the whole app on
   // resolving it (a load-bearing Vite 8 workaround — the map must never be
