@@ -11,9 +11,16 @@ import {
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { Protocol } from 'pmtiles'
 import { FunctionsFetchError } from '@supabase/supabase-js'
-import { TerraDraw, TerraDrawModeUndoRedo, TerraDrawPolygonMode } from 'terra-draw'
+import {
+  TerraDraw,
+  TerraDrawModeUndoRedo,
+  TerraDrawPolygonMode,
+  TerraDrawSelectMode,
+  type SnapToCustom,
+} from 'terra-draw'
 import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter'
 import { buildStyle, LONDON_CENTER, LONDON_ZOOM } from './style'
+import { nearestVertexWithin } from './snapping'
 import { fillColorExpression } from '../areas/color'
 import RatingModal from '../areas/RatingModal'
 import { deleteArea, fetchAreas, saveArea, type AreaFeature } from '../db/client'
@@ -54,6 +61,31 @@ const SAVED_AREAS_SOURCE = 'saved-areas'
 const SAVED_AREAS_FILL_LAYER = 'saved-areas-fill'
 const SAVED_AREAS_LINE_LAYER = 'saved-areas-line'
 
+// Terra Draw's own name for the select mode, and the mode name carried in the
+// `properties.mode` of every feature we hand it.
+const SELECT_MODE = 'select'
+const POLYGON_MODE = 'polygon'
+const STATIC_MODE = 'static'
+
+// How close (container pixels) a vertex has to land before it snaps to a saved area's
+// vertex. Deliberately smaller than the 40px Terra Draw defaults to for its own pointer
+// hit-testing: snapping that reaches too far silently moves a vertex the user placed
+// carefully, which is the opposite of what G6 is for.
+const SNAP_PIXEL_DISTANCE = 20
+
+// The radius within which a tap counts as hitting the polygon's closing point. Terra
+// Draw defaults to 40px; at z14 that is well over 100 m of premature-close radius on a
+// 390px-wide screen. Halving it is only safe because closing no longer depends on
+// hitting that target at all — the "Finish area" button below closes the ring outright.
+const POINTER_DISTANCE = 20
+
+// Terra Draw has no public `finish()`; the documented way to close a ring without
+// clicking the closing point is the mode's configured finish key. The adapter registers
+// its keyup listener on the map canvas (TerraDrawMapLibreGLAdapter#getMapEventElement),
+// so the button dispatches the key there rather than relying on canvas focus.
+const FINISH_KEY = 'Enter'
+const CANCEL_KEY = 'Escape'
+
 type Polygon = { type: 'Polygon'; coordinates: number[][][] }
 
 type PendingFeature = {
@@ -61,8 +93,14 @@ type PendingFeature = {
   geometry: Polygon
 }
 
+// An open edit session on an already-saved area. While one is open the area is loaded
+// into Terra Draw's store under `drawId` so its vertices can be dragged, and is hidden
+// from the `saved-areas` source so it is not drawn twice. Cancelling needs no saved
+// copy of the original: `areas` is never mutated during a session, so dropping the
+// session alone brings the untouched geometry straight back on the next render.
 type EditingArea = {
   id: string
+  drawId: string
   rating: number
   comment: string
   geometry: Polygon
@@ -147,6 +185,13 @@ export default function MapShell() {
 
   const [pendingFeature, setPendingFeature] = useState<PendingFeature | null>(null)
   const [editingArea, setEditingArea] = useState<EditingArea | null>(null)
+  // The map's `click` handler and Terra Draw's snap callback are both registered once,
+  // on load, so they close over the first render's state. These refs are what they read
+  // instead. `editingIdRef` also keeps an area from snapping to its own vertices.
+  const pendingRef = useRef<PendingFeature | null>(null)
+  pendingRef.current = pendingFeature
+  const editingIdRef = useRef<string | null>(null)
+  editingIdRef.current = editingArea?.id ?? null
   const [modalVisible, setModalVisible] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -224,27 +269,85 @@ export default function MapShell() {
         },
       })
 
+      // Snap a vertex being placed or dragged onto the nearest vertex of an already-saved
+      // area, so neighbouring areas share an exact border coordinate instead of leaving a
+      // sliver. Terra Draw's own toCoordinate/toLine snapping cannot do this: saved areas
+      // are not in its store. See src/map/snapping.ts.
+      const snapToSavedAreas: SnapToCustom = (event, context) =>
+        nearestVertexWithin(
+          { x: event.containerX, y: event.containerY },
+          areasRef.current
+            .filter((area) => area.properties.id !== editingIdRef.current)
+            .map((area) => area.geometry),
+          context.project,
+          SNAP_PIXEL_DISTANCE,
+        )
+
       const terraDraw = new TerraDraw({
         adapter: new TerraDrawMapLibreGLAdapter({ map: instance }),
-        modes: [new TerraDrawPolygonMode()],
+        modes: [
+          new TerraDrawPolygonMode({
+            // Without this only the two closing points render; every other vertex the
+            // user placed was invisible, so a misplaced one could not even be seen.
+            showCoordinatePoints: true,
+            editable: true,
+            snapping: { toCustom: snapToSavedAreas },
+            pointerDistance: POINTER_DISTANCE,
+            keyEvents: { finish: FINISH_KEY, cancel: CANCEL_KEY },
+          }),
+          // Holds a finished polygon — a fresh draw awaiting its rating, or a saved area
+          // reopened — with its vertices as drag handles. Polygon mode cannot do this job
+          // once drawing is over: a tap on empty map would start a second polygon.
+          new TerraDrawSelectMode({
+            pointerDistance: POINTER_DISTANCE,
+            flags: {
+              [POLYGON_MODE]: {
+                feature: {
+                  // Dragging a whole area is an easy accident and never the intent here;
+                  // only its individual vertices and midpoints move.
+                  draggable: false,
+                  coordinates: {
+                    draggable: true,
+                    midpoints: true,
+                    snappable: { toCustom: snapToSavedAreas },
+                  },
+                },
+              },
+            },
+          }),
+        ],
         undoRedo: { modeLevel: new TerraDrawModeUndoRedo() },
       })
       terraDraw.start()
-      terraDraw.setMode('static')
+      terraDraw.setMode(STATIC_MODE)
       draw.current = terraDraw
       ;(window as unknown as { __draw?: TerraDraw }).__draw = terraDraw
 
       terraDraw.on('finish', (id, context) => {
-        if (context.action !== 'draw') return
         const feature = terraDraw.getSnapshotFeature(id)
         if (!feature || feature.geometry.type !== 'Polygon') return
-        setPendingFeature({
-          drawId: String(id),
-          geometry: closeRing(feature.geometry as Polygon),
-        })
-        setModalVisible(true)
-        setIsDrawing(false)
-        terraDraw.setMode('static')
+        const geometry = closeRing(feature.geometry as Polygon)
+        const drawId = String(id)
+
+        // A fresh draw closing its ring. Hand it to the rating sheet, then hold it in
+        // select mode rather than static so its vertices stay draggable while the sheet
+        // is up — G6 wants a vertex correctable before the first save, not only after.
+        if (context.action === 'draw') {
+          setPendingFeature({ drawId, geometry })
+          setModalVisible(true)
+          setIsDrawing(false)
+          terraDraw.setMode(SELECT_MODE)
+          terraDraw.selectFeature(id)
+          return
+        }
+
+        // Every other finish action is a coordinate-level edit of a feature already in
+        // the store: a dragged vertex, an inserted midpoint, a deleted coordinate. These
+        // used to hit an `action !== 'draw'` early return and be dropped, so a dragged
+        // vertex never reached save-area and area_cells was never rebuilt from it.
+        // Whichever session owns this id takes the new geometry.
+        setPendingFeature((prev) => (prev && prev.drawId === drawId ? { ...prev, geometry } : prev))
+        setEditingArea((prev) => (prev && prev.drawId === drawId ? { ...prev, geometry } : prev))
       })
 
       const handleAreaClick = (e: MapLayerMouseEvent) => {
@@ -252,10 +355,30 @@ export default function MapShell() {
         if (!feature) return
         const id = feature.properties?.id as string | undefined
         if (!id || feature.properties?.queued) return // not-yet-synced areas aren't editable
+        // One session owns the draw store at a time. A tap that lands on another area
+        // mid-session would otherwise silently abandon the geometry already being edited.
+        if (pendingRef.current || editingIdRef.current) return
         const area = areasRef.current.find((a) => a.properties.id === id)
         if (!area) return
+
+        // Load the saved polygon into Terra Draw so its vertices become drag handles.
+        // Reusing the area's own uuid as the feature id keeps the two trivially
+        // correlated — Terra Draw's default id strategy is uuid v4, which is exactly
+        // what `areas.id` already holds.
+        terraDraw.addFeatures([
+          {
+            id,
+            type: 'Feature',
+            geometry: area.geometry,
+            properties: { mode: POLYGON_MODE },
+          },
+        ])
+        terraDraw.setMode(SELECT_MODE)
+        terraDraw.selectFeature(id)
+
         setEditingArea({
           id: area.properties.id,
+          drawId: id,
           rating: area.properties.rating,
           comment: area.properties.comment ?? '',
           geometry: area.geometry,
@@ -315,11 +438,16 @@ export default function MapShell() {
       })
   }, [mapReady])
 
-  // Keep the rendered source in sync with whichever of synced/queued areas changed.
+  // Keep the rendered source in sync with whichever of synced/queued areas changed. The
+  // area under an open edit session is withheld: Terra Draw is drawing it (with its
+  // vertex handles) for as long as the session lasts, and painting it from here too
+  // would stack a stale copy under the live one.
   useEffect(() => {
     if (!mapReady) return
-    refreshSource(combineFeatures(areas, queuedAreas))
-  }, [mapReady, areas, queuedAreas, refreshSource])
+    const editingId = editingArea?.id
+    const combined = combineFeatures(areas, queuedAreas)
+    refreshSource(editingId ? combined.filter((f) => f.properties.id !== editingId) : combined)
+  }, [mapReady, areas, queuedAreas, editingArea, refreshSource])
 
   const runFlush = useCallback(async () => {
     if (!session || flushingRef.current) return
@@ -355,7 +483,7 @@ export default function MapShell() {
   }, [runFlush])
 
   function handleStartDrawing() {
-    draw.current?.setMode('polygon')
+    draw.current?.setMode(POLYGON_MODE)
     setIsDrawing(true)
   }
 
@@ -363,14 +491,39 @@ export default function MapShell() {
     draw.current?.undo()
   }
 
+  // Terra Draw exposes no public finish(); the mode's configured finish key is the
+  // supported way in. The adapter listens for keyup on the map canvas, so dispatch it
+  // there — this works regardless of what currently holds focus, which a real key press
+  // would not. Closing the ring this way means the last vertex can be placed exactly
+  // where the user wants it, instead of doubling as a tap on the closing point.
+  function handleFinishArea() {
+    const canvas = map.current?.getCanvas()
+    canvas?.dispatchEvent(new KeyboardEvent('keyup', { key: FINISH_KEY, bubbles: true }))
+  }
+
+  // Take the feature out of Terra Draw's store and stand the map down to static.
+  function clearDrawSession(drawId: string | undefined) {
+    if (drawId) draw.current?.removeFeatures([drawId])
+    draw.current?.setMode(STATIC_MODE)
+  }
+
   function handleDismissModal() {
-    // Dismissing must not lose the drawn geometry (SPEC.md § Field UX): for a pending
-    // (unsaved) draw we only hide the modal, the feature stays in Terra Draw's store and
-    // the "Rate & save" pill reappears. Edits of an already-saved area have nothing to
-    // lose, so just clear them.
+    // Dismissing must not lose geometry (SPEC.md § Field UX). The sheet's backdrop
+    // covers the whole map, so dismissing is also the only way to reach the vertex
+    // handles: both a pending draw and an open edit session stay alive in Terra Draw,
+    // and the "Rate & save" pill brings the sheet back.
     setModalVisible(false)
     setSaveError(null)
-    if (editingArea) setEditingArea(null)
+  }
+
+  // Abandon an edit session. `areas` was never mutated while it was open, so simply
+  // dropping the session re-renders the area with its original, untouched geometry.
+  function handleCancelEdit() {
+    if (!editingArea) return
+    clearDrawSession(editingArea.drawId)
+    setEditingArea(null)
+    setModalVisible(false)
+    setSaveError(null)
   }
 
   function handleReopenPending() {
@@ -396,7 +549,7 @@ export default function MapShell() {
     try {
       const result = await saveArea(input)
       if (target.kind === 'create') {
-        draw.current?.removeFeatures([pendingFeature!.drawId])
+        clearDrawSession(pendingFeature!.drawId)
         setAreas((prev) => [
           ...prev,
           {
@@ -413,11 +566,16 @@ export default function MapShell() {
         setLastSavedId(result.area.id)
         setPendingFeature(null)
       } else {
+        clearDrawSession(editingArea!.drawId)
         setAreas((prev) =>
           prev.map((a) =>
             a.properties.id === target.id
               ? {
+                  // The geometry goes in alongside the rating: a vertex dragged during
+                  // this session is part of what was just saved, and the server has
+                  // rebuilt area_cells from it.
                   ...a,
+                  geometry: target.geometry,
                   properties: {
                     ...a.properties,
                     rating: result.area.rating,
@@ -439,9 +597,17 @@ export default function MapShell() {
         await enqueueWrite(entry)
         setQueuedAreas((prev) => [...prev.filter((q) => q.id !== entry.id), entry])
         if (target.kind === 'create') {
-          draw.current?.removeFeatures([pendingFeature!.drawId])
+          clearDrawSession(pendingFeature!.drawId)
           setPendingFeature(null)
         } else {
+          clearDrawSession(editingArea!.drawId)
+          // The queued entry carries `geom`, so an edited outline survives the flush
+          // exactly as a fresh draw does. Show it at its edited shape meanwhile.
+          setAreas((prev) =>
+            prev.map((a) =>
+              a.properties.id === target.id ? { ...a, geometry: target.geometry } : a,
+            ),
+          )
           setEditingArea(null)
         }
         setModalVisible(false)
@@ -459,6 +625,7 @@ export default function MapShell() {
     setSaveError(null)
     try {
       await deleteArea(editingArea.id)
+      clearDrawSession(editingArea.drawId)
       setAreas((prev) => prev.filter((a) => a.properties.id !== editingArea.id))
       if (lastSavedId === editingArea.id) setLastSavedId(null)
       setEditingArea(null)
@@ -478,7 +645,9 @@ export default function MapShell() {
   }
 
   const showRatingModal = modalVisible && (pendingFeature !== null || editingArea !== null)
-  const showReopenPill = pendingFeature !== null && !modalVisible
+  // A dismissed sheet is how the user reaches the vertex handles, so the pill stands in
+  // for it during an edit session too, not just for a pending draw.
+  const showReopenPill = (pendingFeature !== null || editingArea !== null) && !modalVisible
 
   return (
     <div className="relative h-full w-full">
@@ -545,17 +714,39 @@ export default function MapShell() {
           </button>
         )}
 
-        {isDrawing ? (
+        {editingArea && !modalVisible && (
           <button
             type="button"
-            data-testid="undo-vertex"
-            onClick={handleUndoVertex}
-            className="rounded-full bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow"
+            data-testid="cancel-edit"
+            onClick={handleCancelEdit}
+            className="flex min-h-11 items-center justify-center rounded-full bg-white px-4 text-sm font-medium text-gray-700 shadow"
           >
-            Undo point
+            Cancel edit
           </button>
+        )}
+
+        {isDrawing ? (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="undo-vertex"
+              onClick={handleUndoVertex}
+              className="flex min-h-11 items-center justify-center rounded-full bg-white px-4 text-sm font-medium text-gray-900 shadow"
+            >
+              Undo point
+            </button>
+            <button
+              type="button"
+              data-testid="finish-area"
+              onClick={handleFinishArea}
+              className="flex min-h-11 items-center justify-center rounded-full bg-gray-900 px-4 text-sm font-medium text-white shadow"
+            >
+              Finish area
+            </button>
+          </div>
         ) : (
-          !pendingFeature && (
+          !pendingFeature &&
+          !editingArea && (
             <button
               type="button"
               data-testid="start-drawing"
