@@ -304,9 +304,10 @@ assertions — the "mobile first, not mobile only" check.
 > **Check amended 2026-09-11 (perf-probe, lead-approved):** the desktop command carries
 > `--workers=1` explicitly. Measured on the development machine: at 5 workers a full
 > desktop run went 32/32 and then failed 3; at 2 workers, 32/32 then 2 failed then 2
-> failed; at 1 worker, five consecutive runs were clean but for one — run 4's `perf-load`
-> failure at 11 ms against 10 ms, which was a defect in that assertion rather than
-> contention and is fixed in b46323d. Every failing test passed when run alone. The mobile
+> failed; at 1 worker, five consecutive runs were deterministic once the `perf-load`
+> assertion defect (fixed in b46323d) is excluded — run 4's single failure, at 11 ms
+> against 10 ms, was that defect and not contention. Every failing test passed when run
+> alone. The mobile
 > project at the same 5 workers was 6/6 clean, so this is weight rather than worker count
 > — Chromium at 1440x900 costs far more per worker than WebKit at 390x844. Not weakened to
 > pass: no assertion, threshold or timeout was changed, and the gate is stricter in

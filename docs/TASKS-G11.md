@@ -75,9 +75,21 @@ project 33 passed, 0 failed.
 
 ### close-out
 
-- [ ] Run every `done_when` command; record outputs
+- [ ] Run every `done_when` command; record outputs.
+      Note the desktop line carries `--workers=1` as of the 2026-09-11 amendment in
+      `docs/OBJECTIVES.md` § G11 (perf-probe's measurements, lead-approved): five
+      consecutive single-worker runs were deterministic once the `perf-load` assertion
+      defect fixed in b46323d is excluded, against 3 and 2 failures at 5 and 2 workers.
+      Cost is 174-192 s against roughly 100 s.
 
 ---
+
+## Frozen for revalidation
+
+`src/*` is frozen at cb80aaf — draw-accuracy has committed to announcing before touching
+it again, so perf-probe's determinism measurement has a still tree underneath it. The
+eight `[~]` boxes above should therefore reproduce exactly against that commit; if one
+does not, that is a real difference rather than the tree having moved under the run.
 
 ## Note for whoever reconciles run logs against this file
 
