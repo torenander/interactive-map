@@ -8,11 +8,12 @@
 // and the Supabase client behind one is the entire point of the goal, and a
 // budget that counted them anyway would be unmovable.
 //
-// `rel="preload"` links are also excluded, and that is not an oversight.
-// vite.config.ts injects one for the MapLibre worker so its fetch overlaps
-// module evaluation (docs/OBJECTIVES.md § G7). That file is fetched by the
-// worker, never evaluated on the main thread, so charging it to the
-// main-thread budget would penalise the very fix the goal asks for.
+// The MapLibre worker is excluded too, and that is not an oversight.
+// vite.config.ts injects an inline script that starts fetching it from the
+// document head so its bytes overlap module evaluation (docs/OBJECTIVES.md
+// § G7). That file is never evaluated on the main thread — it is handed to a
+// worker as a blob — so charging it to the main-thread budget would penalise
+// the very fix the goal asks for.
 //
 // Usage:
 //   node scripts/assert-bundle-budget.mjs        # checks ./dist

@@ -19,11 +19,21 @@ const BASE = process.env.VITE_BASE || '/'
 // deployed build, the entry finished at 963ms, the worker ran 1082-1329ms, and
 // the first tile range request only went out at 1820ms.
 //
-// The filename is content-hashed, so the link cannot be written by hand in
-// index.html — it is read out of the emitted bundle instead. `as="fetch"`
-// rather than `as="script"` because MapShell fetches the file with `fetch()`
-// and hands MapLibre a blob URL; the preload has to match that request's type
-// or the browser downloads it twice.
+// The filename is content-hashed, so this cannot be written by hand in
+// index.html — it is read out of the emitted bundle instead.
+//
+// A `<link rel="preload">` was the obvious mechanism and does not work here:
+// MapShell does not load the worker as a resource, it `fetch`es the source and
+// hands MapLibre a blob URL (so that the service worker can serve it offline —
+// WebKit does not intercept worker script loads). Preload matching is by
+// request type and credentials mode, and no combination of `as`/`crossorigin`
+// got WebKit to reuse the preloaded entry for that fetch — measured at two
+// resource entries, 50ms and 84ms, downloading the worker twice.
+//
+// Starting the fetch itself is unambiguous: one request, begun while the head
+// is still parsing, and the promise is there for MapShell to await instead of
+// issuing its own. The inline script is deliberately plain ES5 — it runs
+// before anything else on the page and must not need the module pipeline.
 function preloadMapLibreWorker(): Plugin {
   return {
     name: 'areamap:preload-maplibre-worker',
@@ -39,13 +49,11 @@ function preloadMapLibreWorker(): Plugin {
           html,
           tags: [
             {
-              tag: 'link',
-              attrs: {
-                rel: 'preload',
-                as: 'fetch',
-                crossorigin: 'anonymous',
-                href: `${BASE}${fileName}`,
-              },
+              tag: 'script',
+              children:
+                `window.__mapWorkerSource=fetch("${BASE}${fileName}")` +
+                `.then(function(r){return r.ok?r.text():null})` +
+                `.catch(function(){return null});`,
               injectTo: 'head-prepend',
             },
           ],

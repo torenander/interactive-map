@@ -37,11 +37,27 @@ import { enqueueWrite, listQueuedWrites, type QueuedWrite } from '../offline/que
 // The top-level await blocks this module — and therefore the whole app,
 // since main.tsx imports it — until the worker source is in hand, so the
 // map is never created racing against an unresolved worker URL.
+//
+// G7: that await used to be the first moment the worker was asked for, which
+// put its ~500KB strictly after the entry chunk had downloaded and evaluated —
+// measured on the deployed build, the entry finished at 963ms, the worker ran
+// 1082-1329ms, and the first tile range request only went out at 1820ms. The
+// build now starts that fetch from an inline script in the document head (see
+// vite.config.ts) and parks the promise here, so the bytes are already on
+// their way by the time this module runs. The guarantee is unchanged: this
+// still awaits the source before `setWorkerUrl`, it just no longer waits to
+// begin. `vite dev` injects no such script, and the fallback below covers it.
+declare global {
+  interface Window {
+    __mapWorkerSource?: Promise<string | null>
+  }
+}
+
 async function resolveWorkerUrl(originalUrl: string): Promise<string> {
   try {
-    const response = await fetch(originalUrl)
-    if (!response.ok) return originalUrl
-    const source = await response.text()
+    const source = await (window.__mapWorkerSource ??
+      fetch(originalUrl).then((response) => (response.ok ? response.text() : null)))
+    if (source === null) return originalUrl
     return URL.createObjectURL(new Blob([source], { type: 'application/javascript' }))
   } catch {
     return originalUrl
