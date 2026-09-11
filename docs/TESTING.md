@@ -205,6 +205,31 @@ never reproducible in isolation — rather than as a build collision, and cost s
 afternoon chasing the tests instead of the runner. Give each concurrent job its own
 checkout, or serialize them.
 
+### The mobile project runs every spec, on purpose
+
+The mobile project sets no `testMatch`, so it runs all of `tests/e2e/` — including
+`desktop.spec.ts`. Mobile is 33 tests, not 27: the original suite plus the six desktop
+ones. This began as an oversight and is kept deliberately, because the WebKit run of
+`desktop.spec` is what caught the rating sheet's Tab-containment bug. Coverage that catches
+real bugs by accident is worth keeping once you know about it.
+
+The assertions stay meaningful in both projects rather than going vacuous: the 640px sheet
+cap holds at 390px, and `tests/e2e/input.ts` dispatches on `hasTouch`, so each project
+drives the same spec through its own input model.
+
+### Open: the mobile lane has never been measured under load
+
+One mobile run failed four tests at 30s timeouts — including a spec that the change under
+test did not touch — and the immediate re-run and three runs after it were clean. One
+occurrence is not a rate, and it was not chased.
+
+What is unmeasured: every load-sensitivity number in this file comes from the desktop lane.
+The mobile lane runs at default parallelism, has never been run under deliberate load, and
+the `--workers=1` cap does not apply to it. CI's `retries: 2` would mask a low rate there
+entirely. A flaky-count check in CI — failing the build when any test passes only on retry
+— would expose it without needing anyone to reproduce anything; that is on the backlog, not
+in this release.
+
 ### Desktop runs one worker at a time
 
 The desktop project runs with `--workers=1`, and `docs/OBJECTIVES.md` § G11 carries the

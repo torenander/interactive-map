@@ -28,6 +28,16 @@ export default defineConfig({
         // 390x844, which is the target docs/TESTING.md pins. Test that.
         viewport: { width: 390, height: 844 },
       },
+      // No testMatch, deliberately: the mobile project runs EVERY spec, including
+      // tests/e2e/desktop.spec.ts. That started as an oversight — mobile's count
+      // went from 27 to 33 when the desktop suite landed — and is kept on purpose,
+      // because the WebKit run of desktop.spec is what caught the sheet's
+      // Tab-containment bug. Accidental coverage that catches real bugs gets
+      // promoted to intentional rather than scoped away.
+      //
+      // Desktop-only assertions stay true here rather than vacuous: the 640px sheet
+      // cap is satisfied at 390px, and the input helpers (tests/e2e/input.ts)
+      // dispatch on hasTouch, so each project exercises its own input model.
     },
     // G11. Desktop is additive, never a replacement: mobile stays the primary
     // target and runs everything. This project runs the suites that are
