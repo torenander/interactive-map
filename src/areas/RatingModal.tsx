@@ -61,10 +61,9 @@ export default function RatingModal({
   // Focus the sheet itself rather than its first control: landing on "Poor" makes it look
   // preselected, and a stray Space or Enter would then set a rating the user never chose.
   useEffect(() => {
-    // `preventScroll` is load-bearing, not a nicety. Without it, focusing the sheet
-    // scrolls it into view, which shifts the map canvas under the pointer — measured as
-    // a regression in draw-precision.spec.ts on the desktop project, where a click aimed
-    // at a saved area landed on empty map and the sheet never reopened.
+    // `preventScroll` is load-bearing: focusing the sheet otherwise scrolls it into view,
+    // which shifts the map canvas under the pointer — a modal must not move the thing the
+    // user is aiming at.
     sheetRef.current?.focus({ preventScroll: true });
   }, []);
 
