@@ -45,6 +45,19 @@ inject the manifest`, because both write `dist/sw.js` and the PWA plugin reads b
 the other build already replaced. A build racing a live `vite preview` rewrites the hashed
 assets underneath it. Reserving the lock only for Playwright runs leaves exactly that hole.
 
+**The lock gates edits as well as runs.** While somebody else holds it, do not edit
+anything a run reads — `tests/e2e/*`, `src/*`, `vite.config.ts`, `playwright.config.ts`.
+Vite rebuilds and Playwright reads spec files as it goes, so an edit mid-run surfaces as a
+failure whose stack trace points at a line that no longer exists, or at a comment. That is
+an afternoon lost to a phantom bug, and it has already happened here once: a full run
+under the lock failed against a stack trace pointing at a comment, because another agent
+was editing `perf-load.spec.ts` while it executed.
+
+The run lock cannot express "hold the source still", so a measurement that needs a stable
+tree has two options: ask the file's owner for an explicit freeze and wait for their
+confirmation, or run in a throwaway worktree at a fixed commit (below), which is immune by
+construction and is the better answer whenever the measurement matters.
+
 `scripts/e2e-lock.sh status` says who holds it, and whether that process is still alive.
 A lock whose holder is gone reports `stale` and acquisition fails with exit 2 naming the
 dead PID, rather than making every waiter sit out its full timeout. Clearing a stale lock
