@@ -93,6 +93,19 @@ async function canvasCentre(page: Page) {
   return { x: box.x + box.width / 2, y: box.y + box.height / 2, box }
 }
 
+/**
+ * Enter brush mode and wait until it is really open.
+ *
+ * The tap starts a fetch: the brush core and h3-js are a dynamic import, kept off the
+ * critical path for G7's bundle budget, so brush mode opens when the module lands rather
+ * than on the tap itself. Waiting for a control that only exists in brush mode is what
+ * makes the rest of a test deterministic instead of racing that fetch.
+ */
+async function startBrush(page: Page) {
+  await page.getByTestId('start-brush').tap()
+  await expect(page.getByTestId('exit-brush')).toBeVisible()
+}
+
 /** A drag the brush reads as one stroke: press, move in steps, release. */
 async function drag(page: Page, from: { x: number; y: number }, to: { x: number; y: number }) {
   await page.mouse.move(from.x, from.y)
@@ -104,7 +117,7 @@ async function drag(page: Page, from: { x: number; y: number }, to: { x: number;
 
 test('painting an area: drag paints, release rates, save derives cells', async ({ page }) => {
   await signIn(page)
-  await page.getByTestId('start-brush').tap()
+  await startBrush(page)
 
   const { x: cx, y: cy } = await canvasCentre(page)
   const from = { x: cx - 50, y: cy - 40 }
@@ -181,7 +194,7 @@ test('painting an area: drag paints, release rates, save derives cells', async (
 
 test('erase clears what it covers, and undo brings the stroke back', async ({ page }) => {
   await signIn(page)
-  await page.getByTestId('start-brush').tap()
+  await startBrush(page)
 
   const { x: cx, y: cy } = await canvasCentre(page)
   const spot = { x: cx, y: cy - 40 }
@@ -220,7 +233,7 @@ test('erase clears what it covers, and undo brings the stroke back', async ({ pa
 
 test('paint in separate pieces is refused until the gap is closed', async ({ page }) => {
   await signIn(page)
-  await page.getByTestId('start-brush').tap()
+  await startBrush(page)
 
   const { x: cx, y: cy } = await canvasCentre(page)
   const left = { x: cx - 90, y: cy - 40 }

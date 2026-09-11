@@ -97,6 +97,49 @@ mode.
 
 ---
 
+## Fix 2026-09-11: h3-js off the critical path
+
+The G7 bundle budget caught this after both goals had closed: `src/map/brush.ts` imports
+h3-js statically and MapShell imported `./brush` statically, so 63,121 B gzip of cell
+arithmetic sat in the entry chunk. Critical-path JS was 431,221 B against G7's 380,000 B
+budget, and h3-js was 94% of the growth since G7 closed.
+
+The budget stands and the brush defers, by the pattern G7 established for Terra Draw
+(3b3e34f): MapShell imports only the brush's *types* statically — erased at build time —
+and fetches the module in `handleStartBrush`. Painting is not pre-map-paint work.
+
+What that changes, beyond the import:
+
+- The selection is `BrushSelection | null` rather than an eagerly-built empty one. There
+  is no selection before the module exists, and saying so in the type is better than a
+  placeholder that pretends otherwise.
+- `handleStartBrush` is async and the entry button shows the fetch (`Loading…`,
+  disabled). The button is on screen from first paint, so a tap before the module lands
+  has to wait for it rather than flip a mode with nothing behind it — the same reasoning
+  `handleStartDrawing` already carried.
+- A failed fetch clears the memoised promise and surfaces the existing load-error banner,
+  so the next tap retries instead of the session being wedged.
+- `resetBrush` no-ops when the module was never loaded: a drawn polygon's save path calls
+  it too, and it must not pull the brush chunk in just to clear nothing.
+- `brush.spec.ts` waits for a brush-mode control after tapping "Paint area", which is
+  what makes it deterministic rather than racing the fetch.
+
+`tests/unit/brush.test.ts` is untouched and still meaningful: it imports the core
+directly, which is exactly what the dynamic import loads.
+
+| Command | Result |
+|---|---|
+| `node scripts/assert-bundle-budget.mjs` | exit 0 — **367,663 B gzip** (was 431,221) |
+| `npm run build` | exit 0 |
+| `npm run test -- tests/unit/brush.test.ts` | exit 0, **35 passed** |
+| `npm run test:e2e -- tests/e2e/brush.spec.ts` | exit 0, **3 passed** |
+| `! grep -rn 'from("area_cells")' src ...` | exit 0 |
+| `npm run test:e2e -- tests/e2e/perf-load.spec.ts` | exit 0 |
+| `npm run test:e2e -- tests/e2e/points-lines.spec.ts` | exit 0, **5 passed** |
+| `npm run test` / `npm run test:e2e` (whole suites) | exit 0 — **88 unit**, **27 e2e** |
+
+---
+
 ## Stage 2 verification — watched runs
 
 The full G8 `done_when` block from `docs/OBJECTIVES.md`, run in order:

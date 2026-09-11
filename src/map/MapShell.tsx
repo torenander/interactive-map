@@ -35,21 +35,11 @@ import {
   type OverlayId,
 } from './overlays'
 import { nearestVertexWithin } from './snapping'
-import {
-  MAX_SELECTION_CELLS,
-  beginStroke,
-  emptySelection,
-  endStroke,
-  extendStroke,
-  pixelPath,
-  pixelStepFor,
-  selectionToPolygon,
-  selectionToRenderGeometry,
-  undoStroke,
-  type BrushMode,
-  type BrushSelection,
-  type BrushSize,
-} from './brush'
+// G7 budget: the brush core pulls in h3-js (63,121 B gzip) and nothing about it is
+// needed to paint a map — the same case as Terra Draw. Only its types are imported
+// statically (erased at build time); the module itself is fetched when brush mode is
+// entered. See loadBrush below.
+import type { BrushMode, BrushSelection, BrushSize } from './brush'
 import { fillColorExpression } from '../areas/color'
 import RatingModal from '../areas/RatingModal'
 import { deleteArea, fetchAreas, OfflineWriteError, saveArea, type AreaFeature } from '../db/client'
@@ -324,8 +314,16 @@ export default function MapShell() {
   // state would keep stamping onto a selection one or more events stale. State exists to
   // drive rendering, and every change goes through `applySelection` so the two agree.
   const [brushing, setBrushing] = useState(false)
-  const [brushSelection, setBrushSelection] = useState<BrushSelection>(emptySelection)
-  const brushSelectionRef = useRef<BrushSelection>(brushSelection)
+  // `null` until the brush module has been fetched and a session opened: there is no
+  // selection to speak of before either.
+  const [brushSelection, setBrushSelection] = useState<BrushSelection | null>(null)
+  const brushSelectionRef = useRef<BrushSelection | null>(null)
+  // The fetched module, and the in-flight fetch. Everything that touches the brush runs
+  // after brush mode is entered, so `brushModule.current` is set by the time any of it
+  // is reachable; the promise is what the entry point waits on.
+  const brushModule = useRef<typeof import('./brush') | null>(null)
+  const brushLoad = useRef<Promise<typeof import('./brush') | null> | null>(null)
+  const [brushLoading, setBrushLoading] = useState(false)
   const [brushSize, setBrushSize] = useState<BrushSize>(2)
   const brushSizeRef = useRef<BrushSize>(brushSize)
   brushSizeRef.current = brushSize
@@ -388,13 +386,13 @@ export default function MapShell() {
 
   // The one way the brush selection changes: ref first (so the next pointer event builds
   // on it), then state for the render.
-  const applySelection = useCallback((next: BrushSelection) => {
+  const applySelection = useCallback((next: BrushSelection | null) => {
     brushSelectionRef.current = next
     setBrushSelection(next)
     // Exposed for end-to-end tests, for the same reason `__map` and `__draw` are: the
     // rendered fill proves *something* is painted, but only the cell ids show that a
     // stroke covered what it was meant to, or that an erase took exactly those cells.
-    ;(window as unknown as { __brushCells?: string[] }).__brushCells = [...next.cells]
+    ;(window as unknown as { __brushCells?: string[] }).__brushCells = next ? [...next.cells] : []
   }, [])
 
   // Create map + terra draw once.
@@ -860,9 +858,13 @@ export default function MapShell() {
   useEffect(() => {
     if (!mapReady) return
     const source = map.current?.getSource(BRUSH_SOURCE) as GeoJSONSource | undefined
+    const brush = brushModule.current
     source?.setData({
       type: 'Feature',
-      geometry: selectionToRenderGeometry(brushSelection),
+      geometry:
+        brush && brushSelection
+          ? brush.selectionToRenderGeometry(brushSelection)
+          : { type: 'MultiPolygon', coordinates: [] },
       properties: {},
     })
   }, [mapReady, brushSelection])
@@ -916,7 +918,10 @@ export default function MapShell() {
   useEffect(() => {
     if (!mapReady || !brushing) return
     const instance = map.current
-    if (!instance) return
+    const brush = brushModule.current
+    // Brush mode is only entered after the module resolves, so this is set; the guard is
+    // for the teardown case, not a state a user can reach.
+    if (!instance || !brush) return
     const canvas = instance.getCanvas()
 
     // One-finger drag has to paint rather than pan. `dragPan.disable()` alone is not
@@ -940,7 +945,10 @@ export default function MapShell() {
 
     const stampAt = (point: { x: number; y: number }) => {
       const { lat, lng } = instance.unproject([point.x, point.y])
-      applySelection(extendStroke(brushSelectionRef.current, lat, lng, brushSizeRef.current))
+      if (!brushSelectionRef.current) return
+      applySelection(
+        brush.extendStroke(brushSelectionRef.current, lat, lng, brushSizeRef.current),
+      )
     }
 
     const onPointerDown = (event: PointerEvent) => {
@@ -950,7 +958,9 @@ export default function MapShell() {
       painting = true
       setBrushNotice(null)
       canvas.setPointerCapture?.(event.pointerId)
-      applySelection(beginStroke(brushSelectionRef.current, brushModeRef.current))
+      applySelection(
+        brush.beginStroke(brushSelectionRef.current ?? brush.emptySelection(), brushModeRef.current),
+      )
       last = positionIn(event)
       stampAt(last)
     }
@@ -965,8 +975,8 @@ export default function MapShell() {
       // where the app opens, a cell is about five pixels across, and a fixed 20px step
       // left a continuous drag in disconnected pieces (reproduced in brush.spec.ts
       // before this was zoom-aware).
-      const step = pixelStepFor(instance.getZoom(), instance.getCenter().lat)
-      for (const at of pixelPath(last ?? point, point, step)) stampAt(at)
+      const step = brush.pixelStepFor(instance.getZoom(), instance.getCenter().lat)
+      for (const at of brush.pixelPath(last ?? point, point, step)) stampAt(at)
       last = point
     }
 
@@ -981,18 +991,19 @@ export default function MapShell() {
       // its first ~130px, so a stroke that visibly joined two blobs came out
       // disconnected. Filling the tail here makes the stroke end where the finger did.
       const releasedAt = positionIn(event)
-      const step = pixelStepFor(instance.getZoom(), instance.getCenter().lat)
-      for (const at of pixelPath(last ?? releasedAt, releasedAt, step)) stampAt(at)
+      const step = brush.pixelStepFor(instance.getZoom(), instance.getCenter().lat)
+      for (const at of brush.pixelPath(last ?? releasedAt, releasedAt, step)) stampAt(at)
       last = null
 
-      const closed = endStroke(brushSelectionRef.current)
+      if (!brushSelectionRef.current) return
+      const closed = brush.endStroke(brushSelectionRef.current)
       applySelection(closed)
 
       // Release is where the selection becomes a polygon and the rating sheet opens, the
       // same sheet a drawn polygon gets. A selection that cannot be one polygon does not
       // open it: the paint stays on screen with a message saying what to fix, so nothing
       // the user painted is thrown away.
-      const result = selectionToPolygon(closed)
+      const result = brush.selectionToPolygon(closed)
       if (!result.ok) {
         setPendingFeature(null)
         setModalVisible(false)
@@ -1123,15 +1134,43 @@ export default function MapShell() {
     draw.current?.setMode(STATIC_MODE)
   }
 
-  // Brush mode needs no Terra Draw — it never puts a feature in that store — so unlike
-  // handleStartDrawing it does not wait on the import. It does stand Terra Draw down, so
-  // a half-finished polygon cannot keep taking taps underneath the brush.
-  function handleStartBrush() {
+  // The brush core and h3-js are fetched here, not at module load: 63,121 B gzip that the
+  // map does not need to paint and that nobody can use until they have chosen to paint.
+  // Memoised, so a second tap reuses the first fetch rather than starting another.
+  function loadBrush() {
+    brushLoad.current ??= import('./brush')
+      .then((module) => {
+        brushModule.current = module
+        return module
+      })
+      .catch(() => {
+        // Let the next tap try again rather than wedging brush mode for the session.
+        brushLoad.current = null
+        return null
+      })
+    return brushLoad.current
+  }
+
+  // Brush mode needs no Terra Draw — it never puts a feature in that store — but it does
+  // need its own module, so like handleStartDrawing it waits rather than flipping a mode
+  // with nothing behind it. It also stands Terra Draw down, so a half-finished polygon
+  // cannot keep taking taps underneath the brush.
+  async function handleStartBrush() {
     if (pendingFeature || editingArea || pendingMapFeature || editingMapFeature) return
     if (featureMode !== null) return
+
+    setBrushLoading(true)
+    const brush = await loadBrush()
+    setBrushLoading(false)
+    if (!brush) {
+      setLoadError('Could not load the brush tools')
+      return
+    }
+
     draw.current?.setMode(STATIC_MODE)
     setIsDrawing(false)
     setBrushNotice(null)
+    applySelection(brush.emptySelection())
     setBrushing(true)
   }
 
@@ -1142,7 +1181,9 @@ export default function MapShell() {
   }
 
   function resetBrush() {
-    applySelection(emptySelection())
+    // No module means nothing was ever painted — a drawn polygon's save path reaches here
+    // too, and must not pull in the brush chunk just to clear nothing.
+    applySelection(brushModule.current?.emptySelection() ?? null)
     setBrushNotice(null)
   }
 
@@ -1161,11 +1202,13 @@ export default function MapShell() {
   // selection: undoing back to nothing closes the sheet rather than leaving it offering
   // to save a shape that is no longer painted.
   function handleUndoStroke() {
-    const next = undoStroke(brushSelectionRef.current)
+    const brush = brushModule.current
+    if (!brush || !brushSelectionRef.current) return
+    const next = brush.undoStroke(brushSelectionRef.current)
     applySelection(next)
     setBrushNotice(null)
 
-    const result = selectionToPolygon(next)
+    const result = brush.selectionToPolygon(next)
     if (result.ok) {
       setPendingFeature({ drawId: null, geometry: result.polygon })
       return
@@ -1570,13 +1613,15 @@ export default function MapShell() {
             stroke that just happened, and the rating sheet covers the top of the screen.
             The cap message wins over the disconnected one — at the cap, painting the gap
             closed is not available, so that is the more useful thing to say. */}
-        {brushing && (brushSelection.refusedAtCap || brushNotice) && (
+        {brushing && (brushSelection?.refusedAtCap || brushNotice) && (
           <div
             data-testid="brush-message"
             className="rounded-lg bg-amber-50 px-3 py-2 text-center text-xs text-amber-800 shadow"
           >
-            {brushSelection.refusedAtCap
-              ? `That is ${MAX_SELECTION_CELLS.toLocaleString()} cells — the most one area can hold. Erase some, or save this and start another.`
+            {brushSelection?.refusedAtCap
+              ? `That is ${(
+                  brushModule.current?.MAX_SELECTION_CELLS ?? 0
+                ).toLocaleString()} cells — the most one area can hold. Erase some, or save this and start another.`
               : brushNotice}
           </div>
         )}
@@ -1717,10 +1762,11 @@ export default function MapShell() {
               <button
                 type="button"
                 data-testid="start-brush"
-                onClick={handleStartBrush}
-                className="rounded-full bg-blue-600 px-5 py-3 text-base font-medium text-white shadow"
+                disabled={brushLoading}
+                onClick={() => void handleStartBrush()}
+                className="rounded-full bg-blue-600 px-5 py-3 text-base font-medium text-white shadow disabled:opacity-60"
               >
-                Paint area
+                {brushLoading ? 'Loading…' : 'Paint area'}
               </button>
               <button
                 type="button"
