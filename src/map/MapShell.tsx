@@ -10,7 +10,6 @@ import {
 } from 'maplibre-gl'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { Protocol } from 'pmtiles'
-import { FunctionsFetchError } from '@supabase/supabase-js'
 import {
   TerraDraw,
   TerraDrawModeUndoRedo,
@@ -23,7 +22,7 @@ import { buildStyle, LONDON_CENTER, LONDON_ZOOM } from './style'
 import { nearestVertexWithin } from './snapping'
 import { fillColorExpression } from '../areas/color'
 import RatingModal from '../areas/RatingModal'
-import { deleteArea, fetchAreas, saveArea, type AreaFeature } from '../db/client'
+import { deleteArea, fetchAreas, OfflineWriteError, saveArea, type AreaFeature } from '../db/client'
 import { useSession } from '../auth/useSession'
 import { flushQueuedWrites } from '../offline/flush'
 import { enqueueWrite, listQueuedWrites, type QueuedWrite } from '../offline/queue'
@@ -592,7 +591,7 @@ export default function MapShell() {
       // A genuine network failure (server unreachable) queues the write instead of
       // losing it. Any other error (validation, auth) is a real failure and must
       // surface as one — it would fail again identically on flush.
-      if (err instanceof FunctionsFetchError) {
+      if (err instanceof OfflineWriteError) {
         const entry: QueuedWrite = { ...input, queuedAt: Date.now() }
         await enqueueWrite(entry)
         setQueuedAreas((prev) => [...prev.filter((q) => q.id !== entry.id), entry])
