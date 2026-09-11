@@ -164,6 +164,33 @@ async function waitForRenderedAreas(page: Page, expected: number) {
   }, expected)
 }
 
+// The ids of rendered features currently flagged as queued. Read off the same source the
+// map paints from, so this is what is actually on screen — not what React state says.
+// `queued` drives the amber in fillColorExpression, so a true here is a feature the user
+// can see has not reached the server.
+async function queuedFeatureIds(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const map = (
+      window as unknown as {
+        __map?: {
+          queryRenderedFeatures(opts: { layers: string[] }): {
+            properties?: { id?: string; queued?: boolean }
+          }[]
+        }
+      }
+    ).__map
+    const rendered =
+      map?.queryRenderedFeatures({
+        layers: ['saved-features-circle', 'saved-features-line'],
+      }) ?? []
+    const ids = rendered
+      .filter((f) => f.properties?.queued === true)
+      .map((f) => f.properties?.id)
+      .filter((id): id is string => typeof id === 'string')
+    return [...new Set(ids)]
+  })
+}
+
 async function canvasOrigin(page: Page) {
   const box = (await page.locator('.maplibregl-canvas').boundingBox())!
   return { x: box.x, y: box.y, width: box.width, height: box.height }
@@ -372,4 +399,71 @@ test('a point inside a rated area stays tappable, and the area stays tappable ar
   await page.touchscreen.tap(awayFromPoint.x, awayFromPoint.y)
   await expect(page.getByTestId('rating-modal')).toBeVisible()
   await expect(page.getByTestId('comment-input')).toHaveValue('area note')
+})
+
+
+// The offline half of the same contract, mirroring what offline.spec.ts proves for areas.
+// Offline-first is the app's core invariant (SPEC.md § Field UX — a save made underground
+// must survive), and until this existed the feature queue was implemented but unproven
+// end to end: G9's own done_when has no offline assertion.
+test('a point saved with the network blocked queues, renders as queued, then flushes on reconnect', async ({
+  page,
+  context,
+}) => {
+  await signIn(page)
+
+  // `context.setOffline(true)` is the whole block, and deliberately the only one.
+  //
+  // offline.spec.ts pairs setOffline with a `page.route(...).abort()` on its function
+  // URL and calls that route "the load-bearing block". Measured here, the equivalent
+  // route on save-feature is inert: with the route registered and the network left ON,
+  // the save goes straight through and never queues (probed directly — the queued
+  // assertion below failed with 0). The app registers a service worker, and a request it
+  // mediates is not seen by page-level route interception, so setOffline is what
+  // actually severs this path. Carrying the route anyway would have meant a line
+  // claiming to do the work while doing nothing.
+  await context.setOffline(true)
+
+  const origin = await canvasOrigin(page)
+  const spot = { x: origin.x + origin.width / 2, y: origin.y + origin.height / 2 - 50 }
+  await page.getByTestId('start-point').tap()
+  await page.touchscreen.tap(spot.x, spot.y)
+  await rateAndSave(page, 1, 'placed underground')
+
+  // Queued, not saved. CLAUDE.md: never render a save as complete before the server has
+  // it — the point is on the map, but carrying `queued`, which paints it amber rather
+  // than its rating colour.
+  await expect.poll(() => queuedFeatureIds(page)).toHaveLength(1)
+
+  // And nothing reached the database.
+  const { data: beforeFlush } = await admin
+    .from('map_features')
+    .select('id')
+    .eq('user_id', userId)
+  expect(beforeFlush).toEqual([])
+
+  // Restore the network. `setOffline(false)` fires the browser's `online` event, which
+  // MapShell listens for and flushes both queues from. Unlike offline.spec.ts there is no
+  // manual fallback to click here: the "Sync now" button lives in the queued banner, and
+  // that banner counts queued areas only — see the note in docs/TASKS-G9.md.
+  await context.setOffline(false)
+
+  // Load-bearing, proven by a red run: left offline, this poll fails with the point still
+  // queued after the full 20s rather than passing vacuously.
+  await expect.poll(() => queuedFeatureIds(page), { timeout: 20_000 }).toHaveLength(0)
+
+  // Exactly one row, and it went through save-feature — a direct insert is revoked at the
+  // database (migration 0009), so a row existing at all means the write path ran.
+  const afterFlush = await storedFeatures()
+  expect(afterFlush).toHaveLength(1)
+  expect(afterFlush[0].kind).toBe('point')
+  expect(afterFlush[0].rating).toBe(1)
+  expect(afterFlush[0].comment).toBe('placed underground')
+
+  // Survives a reload as a normal saved feature, no longer queued.
+  await page.reload()
+  await waitForMap(page)
+  await waitForRenderedFeatures(page, 1)
+  expect(await queuedFeatureIds(page)).toHaveLength(0)
+  expect(await storedFeatures()).toHaveLength(1)
 })
