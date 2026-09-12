@@ -184,7 +184,7 @@ rejection rather than a constraint violation.
   ```bash
   npx supabase gen types typescript --local > src/db/types.ts
   ```
-- **Polygons only for now.** Points and lines are planned but not in the MVP schema. When they arrive, decide then whether they join `areas` with a geometry-type column or get their own tables — do not pre-build it.
+- **`areas` is polygons only.** Points and lines live in their own table, not as a geometry-type column on `areas` — the question this rule used to leave open, answered below and settled since G9.
   - **Decided 2026-09-11 (G9).** Their own table: `public.map_features`, migrations 0008 and 0009. `areas` is untouched. Joining them onto `areas` would have made every existing constraint, index and the whole `area_cells` derivation conditional on a kind column, for no gain — an area derives H3 cells, a point or line derives none. One table covers both kinds, with `kind` (`'point' | 'line'`) kept honest against `geometrytype(geom::geometry)` by a check constraint.
 
 ## Client-side write queue

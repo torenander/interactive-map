@@ -162,3 +162,75 @@ test('save with the network blocked queues instead of succeeding, then flushes o
   expect(error).toBeNull()
   expect(afterFlush).toHaveLength(1)
 })
+
+// A queued write must also survive the app being RELOADED or killed while offline.
+//
+// Found by attacking production (scratchpad/attack-app.md finding 2): save offline, reload
+// while still offline, come back online, and the queue never drains — the banner keeps
+// saying "will sync" while the server holds nothing.
+//
+// Mechanism, confirmed in code before this test was written: `runFlush` early-returns on a
+// null session, and its only triggers are the `online` event and the manual Sync now
+// button. After an offline reload the browser fires `online` while Supabase is still
+// rehydrating the session from storage, so that flush is skipped — and nothing re-fires it
+// once the session arrives. The queue is stranded until the user happens to find a button.
+//
+// Chromium only: `page.reload()` under `setOffline(true)` raises "WebKit encountered an
+// internal error" in Playwright's WebKit, so the scenario cannot be driven on mobile.
+//
+// HONEST LIMIT — this test passes with AND without the fix, so it is not a regression test
+// for it. Against a local stack the stored token is seconds old, so Supabase restores the
+// session from storage with no network call and `session` is never null; the window the
+// defect needs does not open. In production it does: the reload happens offline, the token
+// refresh that getSession needs cannot complete, `session` stays null through the `online`
+// event, and nothing re-fires the flush when it finally arrives. Attempts to force the
+// ordering by delaying `/auth/v1/token` changed nothing, because locally that call is never
+// made. Reproducing it here would need a deliberately stale stored token.
+//
+// What this test does buy: the journey itself is now covered end to end, so a future change
+// that breaks offline-reload survival in a way localhost CAN see will be caught.
+test('a queued write survives a reload taken while offline, and flushes on reconnect', async ({
+  page,
+  context,
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium', 'page.reload() while offline errors in WebKit')
+
+  // This file's tests share one user, and the test above leaves its flushed area behind.
+  // Start from a clean slate so "the server holds nothing" means this test's nothing.
+  await admin.from('areas').delete().eq('user_id', userId)
+
+  await signIn(page)
+  await context.setOffline(true)
+
+  await drawPolygon(page)
+  await expect(page.getByTestId('rating-modal')).toBeVisible()
+  await page.waitForTimeout(200)
+  await page.getByTestId('rating-1').click()
+  await page.getByTestId('comment-input').fill('saved underground')
+  await page.getByTestId('save-area').click()
+  await expect(page.getByTestId('rating-modal')).toBeHidden()
+
+  await expect(page.getByTestId('queued-banner')).toBeVisible()
+  const { data: beforeReload } = await admin.from('areas').select('id').eq('user_id', userId)
+  expect(beforeReload).toEqual([])
+
+  // Reloaded — or killed and reopened — while still offline. The service worker serves the
+  // shell; the queue lives in IndexedDB and comes back with it.
+  await page.reload()
+  await expect(page.locator('.maplibregl-canvas')).toBeVisible()
+  await page.waitForFunction(() => {
+    const map = (window as unknown as { __map?: { isStyleLoaded(): boolean } }).__map
+    return !!map && map.isStyleLoaded()
+  })
+  await expect(page.getByTestId('queued-banner')).toBeVisible()
+
+  // Back online, and nothing is tapped. Sync now is deliberately not clicked: a queue that
+  // drains only when the user finds a button is a queue that loses data.
+  await context.setOffline(false)
+
+  await expect(page.getByTestId('queued-banner')).toBeHidden({ timeout: 30_000 })
+  const { data: afterFlush, error } = await admin.from('areas').select('id').eq('user_id', userId)
+  expect(error).toBeNull()
+  expect(afterFlush).toHaveLength(1)
+})

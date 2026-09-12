@@ -8,9 +8,19 @@
 - Rating validation
 - Schema constraints against a local Supabase instance (checks, cascades, RLS isolation)
 
-**E2E (Playwright, iPhone 14 viewport, 390x844)** — one flow per goal, not exhaustive coverage:
+**E2E (Playwright)** — one flow per goal, not exhaustive coverage. Eleven spec files run
+across two projects: `--project=mobile` (WebKit, iPhone 14 at 390x844, 37 tests — every
+spec) and `--project=desktop --workers=1` (Chromium at 1440x900, 36 tests; the flag is
+required, see the G11 amendment in `docs/OBJECTIVES.md`).
 - `map-shell.spec.ts` — map renders, viewport, attribution, geolocate
 - `mvp-loop.spec.ts` — draw, rate, save, reload, edit, delete
+- `draw-precision.spec.ts` — vertex handles, explicit finish, snapping to saved borders
+- `touch-draw.spec.ts` — the WebKit ghost-click race; mobile only, by design
+- `brush.spec.ts` — paint, erase, stroke undo, one polygon on release
+- `points-lines.spec.ts` — point and line round trips, moves, offline queue
+- `overlays.spec.ts` — toggles, attribution, same-origin, offline
+- `desktop.spec.ts` — mouse and keyboard behaviours
+- `perf-load.spec.ts` — no whole-archive download, worker not serialized
 - `offline.spec.ts` — save with network blocked, flush on reconnect
 - `offline-map.spec.ts` — tiles from cache with network blocked
 
@@ -247,8 +257,8 @@ checkout, or serialize them.
 ### The mobile project runs every spec, on purpose
 
 The mobile project sets no `testMatch`, so it runs all of `tests/e2e/` — including
-`desktop.spec.ts`. Mobile is 33 tests, not 27: the original suite plus the six desktop
-ones. This began as an oversight and is kept deliberately, because the WebKit run of
+`desktop.spec.ts`. Mobile is 37 tests, not the 27 it began at: every spec, including the six
+desktop ones and G13's additions. This began as an oversight and is kept deliberately, because the WebKit run of
 `desktop.spec` is what caught the rating sheet's Tab-containment bug. Coverage that catches
 real bugs by accident is worth keeping once you know about it.
 
@@ -310,8 +320,9 @@ people to re-run it, which is how a real failure gets waved through.
 
 The same applies in `ci.yml`, where it is now applied: the e2e gate is two steps, one per
 project, and the desktop step carries `--workers=1`. A bare `npm run test:e2e` runs both
-projects together — 65 tests where 27 used to run — at default parallelism on a two-core
-runner, which is exactly the configuration this section says does not work.
+projects together — today 73 executions, 37 in the mobile lane plus 36 in the desktop one,
+where 27 used to run — at default parallelism on a two-core runner, which is exactly the
+configuration this section says does not work.
 
 **That gap was recorded here and not applied, and CI failed on it twice.** Writing a
 constraint down is not the same as enforcing it, and nothing gated the distance between the

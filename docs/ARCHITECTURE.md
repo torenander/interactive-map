@@ -75,7 +75,7 @@ inform.
 
 ## Drawing — Terra Draw
 
-Adapter-based, so the drawing layer is not coupled to MapLibre. Clean mode API for adding a brush mode later without rewriting the polygon path.
+Adapter-based, so the drawing layer is not coupled to MapLibre. Clean mode API, which is what let G8 add brush painting without rewriting the polygon path.
 
 Why not mapbox-gl-draw: tied to one engine, and its licence follows Mapbox.
 

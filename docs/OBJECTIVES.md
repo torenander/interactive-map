@@ -301,8 +301,8 @@ grep -q "Escape" src/areas/RatingModal.tsx
 ```
 `--project=mobile` is the whole suite at 390x844, green with no edits to its assertions —
 the "mobile first, not mobile only" check. It runs *every* spec in `tests/e2e/`, including
-`desktop.spec.ts`, because the mobile project sets no `testMatch`: 33 tests where the
-pre-G11 suite was 27. That started as an oversight and is kept deliberately — the WebKit
+`desktop.spec.ts`, because the mobile project sets no `testMatch`: 37 tests today, where
+the pre-G11 suite was 27 and G11 itself brought it to 33. That started as an oversight and is kept deliberately — the WebKit
 run of `desktop.spec.ts` caught a focus bug the desktop run did not, and accidental
 coverage that catches real bugs gets promoted rather than scoped away. The assertions stay
 meaningful in both projects rather than vacuous in one: the 640 px sheet cap holds at
