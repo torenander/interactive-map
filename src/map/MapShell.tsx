@@ -85,8 +85,7 @@ import {
 // network-blocked reload it fails outright. Only the offline case is what
 // this workaround buys, so testing interception online will show it working
 // and suggest the blob URL is removable. It is not. The four-cell grid and
-// the harness method are in docs/TESTING.md; G12 closed as unachievable on
-// exactly this evidence.
+// the harness method are in docs/TESTING.md.
 // The top-level await blocks this module — and therefore the whole app,
 // since main.tsx imports it — until the worker source is in hand, so the
 // map is never created racing against an unresolved worker URL.
