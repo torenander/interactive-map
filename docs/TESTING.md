@@ -320,8 +320,9 @@ people to re-run it, which is how a real failure gets waved through.
 
 The same applies in `ci.yml`, where it is now applied: the e2e gate is two steps, one per
 project, and the desktop step carries `--workers=1`. A bare `npm run test:e2e` runs both
-projects together — 65 tests where 27 used to run — at default parallelism on a two-core
-runner, which is exactly the configuration this section says does not work.
+projects together — today 73 executions, 37 in the mobile lane plus 36 in the desktop one,
+where 27 used to run — at default parallelism on a two-core runner, which is exactly the
+configuration this section says does not work.
 
 **That gap was recorded here and not applied, and CI failed on it twice.** Writing a
 constraint down is not the same as enforcing it, and nothing gated the distance between the
