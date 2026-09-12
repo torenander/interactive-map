@@ -1090,11 +1090,36 @@ Closing a goal because the thing it assumed turned out to be false is a result, 
 stop condition was written into the goal precisely so this outcome would not read as a
 failure to deliver.
 
-# G13 — Move saved points and lines — planned, not started
+# G13 — Move saved points and lines — done 2026-09-12
 
-Goal block: `docs/OBJECTIVES.md` § G13. Task breakdown: `docs/TASKS-G13.md` (blocked by
-G9, G11).
+Task breakdown: `docs/TASKS-G13.md` (teammate draw-accuracy, ledger kept by goals-author).
 
-Gives saved points and lines the geometry editing areas have had since G6. No migration:
-`save_feature_tx`'s conflict path already sets `geom`, so `db reset` and a clean types diff
-are the gate asserting none was added. No box has been started; every one is `[ ]`.
+All nine `done_when` commands exit 0, re-run independently by the lead at da87b22 after
+the implementer's own runs: the `move-feature` grep, `db reset` with migrations 0001-0009
+and **none added**, a clean types diff, `npm run build`, 88 unit tests, the whole mobile
+project 37/37 and the whole desktop project 36/36, both at `retries=0` — the full lanes
+subsume the suite-specific commands the block names.
+
+A saved point drags to a new position and a saved line's vertices drag to reshape it, at
+both viewports, saving through `save-feature` and queueing offline like any other feature
+write. No migration: `save_feature_tx`'s conflict path already carried `set geom =
+excluded.geom` (migration 0009, line 69), which draw-accuracy re-confirmed against the
+migration rather than taking the goal header's word for it. `db reset` plus a clean types
+diff are the gate asserting none was added.
+
+Two things worth surfacing:
+
+- **A pre-existing duplicate-feature bug, found before the spec was written.** MapShell's
+  `finish` handler split on geometry *before* action, so its point/line branch treated a
+  move's drag as a fresh placement: the sheet reopened and a second feature queued instead
+  of the one in hand moving. Nothing exercised the asymmetry until moves existed. It was
+  found by probing the mechanism first — a spec written to the assumed model would have
+  encoded the wrong behaviour and passed.
+- **`RatingModal` gained an `extraAction` slot rather than a `Move` prop.** The sheet does
+  not learn what moving means; it renders an action the map hands it. The alternative adds
+  a feature-specific prop to a component shared by areas, points and lines, and the next
+  action would add another.
+
+`points-lines.spec.ts`'s local render-waits were migrated onto `tests/e2e/rendered.ts`
+along the way — the local one queried both feature layers at once, which is the sort of
+near-duplicate that drifts.
