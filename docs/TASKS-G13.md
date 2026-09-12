@@ -19,26 +19,32 @@ predicate on the conflict path. The `done_when` below therefore asserts the sche
 
 ## Tasks
 
-- [x] Read `src/map/MapShell.tsx`'s area-edit session first — G6 built this for polygons
+Marks carry whose run they rest on. These are `[~]` — draw-accuracy's watched runs, commits
+5a9cb6e, 6239ede and da87b22 — not `[x]`, which this repo reserves for the lead's
+independent validation. The evidence below each box is what the mark was raised on; the
+lead's run is what would move it.
+
+
+- [~] Read `src/map/MapShell.tsx`'s area-edit session first — G6 built this for polygons
       (load into Terra Draw's store, `SELECT_MODE`, vertices as handles, cancel by dropping
       the session since `areas` is never mutated while it is open) — and follow it rather
       than inventing a second shape for one interaction
-- [x] Terra Draw select-mode flags for `point` and `linestring`, mirroring the polygon
+- [~] Terra Draw select-mode flags for `point` and `linestring`, mirroring the polygon
       entry: a point is `feature.draggable`, a line is `coordinates.draggable` with
       midpoints off, since adding vertices is out of scope
-- [x] A `move-feature` control on the saved-feature sheet to open a move session, and a
+- [~] A `move-feature` control on the saved-feature sheet to open a move session, and a
       cancel that restores the saved geometry by dropping the session
-- [x] Route the moved geometry through `saveFeature` → `save-feature`; no new SQL, since
+- [~] Route the moved geometry through `saveFeature` → `save-feature`; no new SQL, since
       `save_feature_tx`'s conflict path already sets `geom`
-- [x] Offline: the feature queue carries the moved geometry, renders as queued, and flushes
+- [~] Offline: the feature queue carries the moved geometry, renders as queued, and flushes
       on reconnect — mirroring what the area queue does with an edited outline
-- [x] Check the tap-precedence rules still hold with a move session open: brush owns the
+- [~] Check the tap-precedence rules still hold with a move session open: brush owns the
       pointer while active, any open session blocks another, and a feature beats the area
       beneath it. A move session is a fourth state in that table, not an exception to it
-- [x] Extend `points-lines.spec.ts` with the assertions above, using `tests/e2e/input.ts`
+- [~] Extend `points-lines.spec.ts` with the assertions above, using `tests/e2e/input.ts`
       so both projects run them, and `tests/e2e/rendered.ts` before any click on saved
       geometry — that race is what failed the G11 sweep once
-- [x] Run the `done_when` block; record outputs
+- [~] Run the `done_when` block; record outputs
 
 
 ---
