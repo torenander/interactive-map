@@ -102,14 +102,45 @@ jobs:
       # Splitting also keeps a failure attributable: one step per project says which
       # lane broke without reading the matrix.
       - name: Gate — npm run test:e2e (mobile project)
-        run: npm run test:e2e -- --project=mobile
+        run: npm run test:e2e -- --project=mobile 2>&1 | tee /tmp/e2e-mobile.log; exit ${PIPESTATUS[0]}
 
       # --workers=1 per docs/OBJECTIVES.md § G11's amended done_when. The flag is the
       # gate, not a speed knob: without it this lane fails intermittently on merit,
       # which teaches people to re-run CI, which is how a real failure gets waved
       # through.
       - name: Gate — npm run test:e2e (desktop project)
-        run: npm run test:e2e -- --project=desktop --workers=1
+        run: npm run test:e2e -- --project=desktop --workers=1 2>&1 | tee /tmp/e2e-desktop.log; exit ${PIPESTATUS[0]}
+
+      # A test that fails and then passes on retry is not a pass. playwright.config.ts
+      # sets retries: 2 under CI, so without this step a flaky test is indistinguishable
+      # from a solid one in the build result — and the whole point of the retry is to
+      # stop one transient failing a release, not to hide that it happened.
+      #
+      # This is deliberately NOT "set retries to 0". Both make the build red, but this
+      # one says WHICH kind of red: a hard failure and a flaky pass look identical at
+      # retries: 0, and the difference is the first thing anyone diagnosing it needs.
+      # Keeping the retry also keeps its diagnostic value — you learn the test can pass,
+      # which rules out a deterministic break.
+      #
+      # Recorded because it was invisible for weeks: docs/TESTING.md's measurement
+      # section has the three harnesses that reported confident numbers while measuring
+      # nothing, and a green build hiding a retried pass is the same failure wearing CI's
+      # clothes.
+      - name: Gate — no test passed only on retry
+        if: always()
+        run: |
+          flaky=0
+          for log in /tmp/e2e-mobile.log /tmp/e2e-desktop.log; do
+            [ -f "$log" ] || continue
+            n=$(grep -cE "^\s+[0-9]+ flaky" "$log" || true)
+            if [ "$n" -gt 0 ]; then
+              echo "::error::$(basename "$log" .log): tests passed only on retry"
+              grep -E "flaky|✘" "$log" | head -20
+              flaky=1
+            fi
+          done
+          [ "$flaky" -eq 0 ] && echo "no test needed a retry"
+          exit $flaky
 
       - name: Gate — node scripts/assert-pwa.mjs
         run: node scripts/assert-pwa.mjs

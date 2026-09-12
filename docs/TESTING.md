@@ -217,18 +217,43 @@ The assertions stay meaningful in both projects rather than going vacuous: the 6
 cap holds at 390px, and `tests/e2e/input.ts` dispatches on `hasTouch`, so each project
 drives the same spec through its own input model.
 
-### Open: the mobile lane has never been measured under load
+### Measured: the mobile lane does fail under load
 
-One mobile run failed four tests at 30s timeouts — including a spec that the change under
-test did not touch — and the immediate re-run and three runs after it were clean. One
-occurrence is not a rate, and it was not chased.
+Ten full mobile runs at default parallelism with eight CPU burners on a ten-core machine
+(load average 53, verified in the process table rather than assumed):
 
-What is unmeasured: every load-sensitivity number in this file comes from the desktop lane.
-The mobile lane runs at default parallelism, has never been run under deliberate load, and
-the `--workers=1` cap does not apply to it. CI's `retries: 2` would mask a low rate there
-entirely. A flaky-count check in CI — failing the build when any test passes only on retry
-— would expose it without needing anyone to reproduce anything; that is on the backlog, not
-in this release.
+| Condition | Rate |
+|---|---|
+| Mobile, default workers, under load | **1 failed / 10 runs** |
+| Mobile, default workers, quiet | 0 failed / 6 runs |
+
+All five failures fell in one run, across five distinct tests — three brush, one desktop
+Escape, one draw-precision — every one a 30 s timeout, with seven more never reaching the
+runner. That is the load signature: it takes out whatever is executing, not a particular
+test. The failing run was also the one whose webServer build competed with the burners.
+
+So the mobile lane carries the same exposure as the desktop lane did, and `--workers=1`
+does not apply to it. It is not capped here: a real 390x844 phone is single-user and the
+lane is fast, so the cost of capping is paid on every run against a risk that only appears
+when something else saturates the machine. The gate below makes it visible instead.
+
+One thing left unexplained rather than theorised: runs 7-10 completed in 50-54 s against
+1.1-1.6 m for runs 2-6, under nominally identical load. Thermal or scheduler behaviour is a
+guess, and a guess in this file is worth less than the admission.
+
+### CI fails a build when a test passes only on retry
+
+`playwright.config.ts` sets `retries: 2` under CI, so without a check a flaky-then-passed
+test is indistinguishable from a solid one in the build result. `ci.yml` tees each e2e
+lane's output and a following step fails the build if either reports flaky tests.
+
+This is deliberately not "set retries to 0". Both make the build red; this one says *which
+kind* of red. A hard failure and a flaky pass look identical at `retries: 0`, and that
+difference is the first thing anyone diagnosing it needs — the retry itself is evidence the
+test can pass, which rules out a deterministic break. The measurement above is why the
+distinction is worth keeping: the mobile lane has a real, low, load-dependent rate, and a
+build that goes red without saying "this passed on the second try" sends someone hunting a
+break that is not there.
 
 ### Desktop runs one worker at a time
 
