@@ -1069,6 +1069,19 @@ which is why the four-cell grid is recorded rather than the verdict alone. "WebK
 intercepts worker loads" is true and insufficient, and anyone reopening this should show
 the offline-reload cell has changed before doing so.
 
+Two caveats travel with that. The spike ran in a minimal harness — plain page, plain
+service worker, plain same-origin worker on a static server — so it answers a question about
+the browser rather than about areamap, and should not be read as "tested in the app". And
+offline *within an already-loaded document* the worker still spawned, from the evictable
+HTTP cache with the service worker uninvolved; a spike that stopped there would have
+reported success. Only the reload — a fresh document that cannot reuse what the previous one
+held — exposed the failure.
+
+One stale claim is now known and recorded rather than left to be met cold: the G5-era
+comment at `src/map/MapShell.tsx:71` says WebKit does not intercept worker script requests
+at all. That is no longer accurate as written; the online half now is intercepted.
+Correcting it belongs to whichever stage next touches that file.
+
 Consequences, all deliberate: the blob-URL workaround stays load-bearing, and
 `overlays.spec.ts` keeps tolerating exactly two WebKit messages offline while failing on
 any other page error. That allowance is the honest state of the world, not a shortcut.

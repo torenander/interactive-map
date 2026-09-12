@@ -411,10 +411,20 @@ allowance.
 > | Offline, same document | cache-served | fine |
 > | Offline, after reload | **fails; SW never sees the request** | fine |
 >
-> "WebKit now intercepts worker loads" is true and insufficient: interception online and
-> in an already-loaded document does nothing for the case that matters, a reload with no
-> network. Anyone reopening this should first show that the bottom-left cell has changed.
-> Full measurements: `docs/TESTING.md`.
+> The closure is therefore about the **offline guarantee** being unavailable, explicitly
+> not about interception being unavailable. "WebKit now intercepts worker loads" is true
+> and insufficient: interception online, and offline inside an already-loaded document —
+> where the worker spawns from the evictable HTTP cache with the service worker uninvolved
+> — does nothing for the case that matters, a reload with no network. Anyone reopening this
+> should first show that the offline-reload cell has changed.
+>
+> Two caveats that belong with the result. The spike ran in a minimal harness — plain page,
+> plain service worker, plain same-origin worker on a static server — so it answers a
+> question about the browser, not about areamap's plumbing; it should not be read as
+> "tested in the app". And the G5-era comment at `src/map/MapShell.tsx:71` still says WebKit
+> does not intercept worker script requests at all, which is no longer accurate as written;
+> correcting it belongs to whichever stage next touches that file. Method and measurements:
+> `docs/TESTING.md` (8b19315).
 
 **blocked_by**
 G7, G10.
