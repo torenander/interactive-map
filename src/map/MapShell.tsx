@@ -45,6 +45,7 @@ import RatingModal from '../areas/RatingModal'
 import { deleteArea, fetchAreas, OfflineWriteError, saveArea, type AreaFeature } from '../db/client'
 import { useSession } from '../auth/useSession'
 import { flushQueuedWrites } from '../offline/flush'
+import { shouldFlushOnSessionArrival } from '../offline/flushTrigger'
 import { enqueueWrite, listQueuedWrites, type QueuedWrite } from '../offline/queue'
 import {
   deleteFeature,
@@ -1180,8 +1181,13 @@ export default function MapShell() {
   // Safe to depend on the queue lengths: a failed flush leaves them unchanged, so this
   // cannot spin, and a successful one drops them to zero, which returns at the guard.
   useEffect(() => {
-    if (!mapReady || !session) return
-    if (queuedAreas.length === 0 && queuedMapFeatures.length === 0) return
+    const trigger = shouldFlushOnSessionArrival({
+      mapReady,
+      hasSession: session !== null,
+      queuedAreas: queuedAreas.length,
+      queuedFeatures: queuedMapFeatures.length,
+    })
+    if (!trigger) return
     void runFlush()
   }, [mapReady, session, queuedAreas.length, queuedMapFeatures.length, runFlush])
 
