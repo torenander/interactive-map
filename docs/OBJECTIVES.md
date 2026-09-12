@@ -350,6 +350,102 @@ G6.
 
 ---
 
+## G12 — Same-origin MapLibre worker
+
+**objective**
+MapLibre's worker is started from a real same-origin URL rather than a blob built from a
+fetched copy of its source, so a worker the service worker can serve is the one the
+browser asks for. The offline gate stops tolerating "Importing a module script failed"
+and asserts zero page errors instead. The Vite 8 / rolldown non-emission workaround
+survives in whatever form the new path needs — the map must never be created against an
+unresolved worker URL, and the worker must still be fetched exactly once, started by the
+document.
+
+**done_when**
+```
+npm run build
+npm run test:e2e -- --project=mobile
+npm run test:e2e -- --project=desktop --workers=1
+npm run test:e2e -- --project=mobile tests/e2e/perf-load.spec.ts
+node scripts/assert-bundle-budget.mjs
+! grep -q "createObjectURL" src/map/MapShell.tsx
+! grep -q "Importing a module script failed" tests/e2e/overlays.spec.ts
+```
+`overlays.spec.ts`'s offline test currently ends with a filter that tolerates exactly two
+WebKit messages and fails on anything else. That allowance is deleted: the assertion
+becomes `expect(pageErrors).toEqual([])` with the network hard-blocked and an overlay
+enabled, which is the condition that produced the messages in the first place. The grep
+gate is what stops the allowance being reintroduced quietly, and it fails today because
+that string is in the file.
+The `createObjectURL` gate fails today for the same reason: the blob is still how the
+worker URL is made.
+`perf-load.spec.ts` must stay green *unchanged*. Two of its assertions are the real
+constraint on any redesign: the worker fetch is initiated by the document, and
+`maplibre-gl-worker` is fetched exactly once. A naive `<link rel="modulepreload">` breaks
+the second — `vite.config.ts` records it measured at two resource entries, 50 ms and
+84 ms, downloading the worker twice — so that route is already known not to work.
+`assert-bundle-budget.mjs` keeps G7's 380,000 B ceiling honest across the change.
+
+**out_of_scope**
+Removing the Vite 8 / rolldown workaround itself: the bundler still does not emit the
+worker chunk from MapLibre's internal `new Worker(new URL(...))`, and this goal changes
+how the emitted chunk is *addressed*, not whether we have to address it. Upgrading or
+patching Vite, rolldown or MapLibre to fix the emission upstream. Service-worker changes
+beyond whatever the new worker URL needs to be cacheable. The `docs/TESTING.md` conventions
+around locks and measurement. Anything about overlays other than that one tolerated-error
+allowance.
+
+**blocked_by**
+G7, G10.
+
+---
+
+## G13 — Move saved points and lines
+
+**objective**
+A saved point can be dragged to a new position and a saved line's vertices can be dragged
+to reshape it, at 390x844 and at 1440x900. The move saves through `save-feature` like any
+other feature write, survives a reload, and queues offline instead of being lost. This
+closes the gap the handoff records: rating, comment and delete already work on features;
+geometry does not, while areas have had it since G6.
+
+**done_when**
+```
+npx supabase db reset
+npx supabase gen types typescript --local | diff - src/db/types.ts
+npm run build
+npm run test -- tests/unit/
+npm run test:e2e -- --project=mobile tests/e2e/points-lines.spec.ts
+npm run test:e2e -- --project=desktop --workers=1 tests/e2e/points-lines.spec.ts
+npm run test:e2e -- --project=mobile
+npm run test:e2e -- --project=desktop --workers=1
+grep -q 'data-testid="move-feature"' src/map/MapShell.tsx
+```
+`db reset` and the types diff both pass today and must keep passing: they are the assertion
+that this goal added no migration, since `save_feature_tx` already accepts a geometry
+update.
+`points-lines.spec.ts` gains, at both viewports: a saved point dragged to a new position
+reloads at the new position and not the old one; a saved line vertex dragged reshapes the
+line and the reshaped geometry survives a reload; a move made with the network blocked
+renders as queued, with the database still holding the old geometry, and flushes to the new
+one on reconnect; and a move that is cancelled leaves the saved geometry untouched.
+The grep gate fails today and pins the control that opens a move.
+The two whole-project runs are the regression gate — `MapShell.tsx` is shared, and G11's
+tap precedence between brush, areas and features lives there.
+
+**out_of_scope**
+H3 for features: `area_cells` stays polygon-derived, per the G9 posture. Any schema change
+— if one proves necessary, stop and raise it rather than folding a migration into this
+goal. Changing an existing feature's `kind`. Adding or deleting vertices of a saved line,
+as opposed to moving them. Snapping features to saved borders (G6's snapping is a polygon
+concern). Multi-select or moving several features at once. Undo of a completed move beyond
+the existing delete.
+
+**blocked_by**
+G9, G11.
+
+---
+
 ## Not goals
 
 Do not start these without a new block in this file:

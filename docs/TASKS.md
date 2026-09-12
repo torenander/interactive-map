@@ -1052,3 +1052,20 @@ merge awaits Tor.
 `docs/TASKS-G11.md` also carries a reading note earned the hard way: the boxes are a ledger,
 not a status board, an unticked box means "not yet recorded" rather than "not yet done", and
 status comes from asking the owner rather than from the file, a free lock, or the branch.
+
+---
+
+# G12 and G13 — planned, not started
+
+Goal blocks: `docs/OBJECTIVES.md` §§ G12, G13. Task breakdowns: `docs/TASKS-G12.md`
+(blocked by G7, G10) and `docs/TASKS-G13.md` (blocked by G9, G11).
+
+Both close gaps this release recorded rather than new ideas: G12 removes the tolerated
+"Importing a module script failed" allowance in `overlays.spec.ts` by serving the worker
+from a real same-origin URL, and G13 gives saved points and lines the geometry editing
+areas have had since G6. No box in either file has been started; every one is `[ ]`.
+
+G12 carries a stop condition rather than an assumption. It depends on WebKit intercepting
+a same-origin worker script request, which is the limitation G5's blob exists to work
+around; if that has not changed, the goal is unachievable as written and the current
+allowance is the honest state of the world.
