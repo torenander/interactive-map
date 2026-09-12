@@ -140,6 +140,45 @@ Guards that follow from it, in every measurement harness:
   harness than a 100% failure rate. The genuine result that followed was ragged —
   26.8 to 32.2 seconds across 20 passes.
 
+### Spiking a browser behaviour: isolate it, do not test it through the app
+
+G12 asked whether WebKit's service worker can intercept a same-origin worker script load,
+which decides whether `src/map/MapShell.tsx`'s blob-URL workaround can go. Measured in a
+standalone harness — a plain page, a plain service worker, a plain worker script on a local
+static server — rather than through areamap, so the answer is about the browser and not
+about this app's plumbing. The service worker logged every request it saw, which is what
+separates *intercepted and served* from *served by the HTTP cache* from *never happened*:
+
+| Condition | Worker | SW saw the request |
+|---|---|---|
+| WebKit, online | spawned | **yes** |
+| WebKit, offline, same document | spawned | no — HTTP cache |
+| **WebKit, network-blocked reload** | **failed** | **no** |
+| Chromium, online and offline | spawned | yes |
+
+The third row decides it, and the second is why the first two alone would have misled:
+offline in an already-loaded document the worker still spawned, from the evictable HTTP
+cache, with the service worker never involved. Only a reload — a fresh document that cannot
+reuse what the previous one had — shows the request failing outright.
+
+Two method notes worth reusing:
+
+- **Log what the service worker saw.** Without it, "the worker spawned" cannot be
+  distinguished from "the worker spawned *because of the service worker*", and those give
+  opposite answers.
+- **Use this repo's offline mechanism, not a third one.** `context.setOffline(true)` makes
+  WebKit throw an internal error on the next navigation, which killed the first attempt at
+  the deciding cell. `offline-map.spec.ts:111-123` already documents the working pattern:
+  let the navigation through — the service worker answers it before the network — and
+  hard-block everything else.
+
+The finding that survives: WebKit now **does** intercept worker script loads online, so the
+G5-era claim that it never does is no longer accurate as written. It buys nothing, because
+the blob URL exists for the offline path and offline is exactly where interception still
+does not happen. A premise can expire in a way that changes the sentence without changing
+the decision — and someone who re-tests only the online half will conclude the workaround is
+removable.
+
 ### Write the cell grid down before comparing anything
 
 Before running a comparison, list the cells — every combination of the variable you care
