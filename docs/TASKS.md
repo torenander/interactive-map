@@ -1055,17 +1055,33 @@ status comes from asking the owner rather than from the file, a free lock, or th
 
 ---
 
-# G12 and G13 — planned, not started
+# G12 — Same-origin MapLibre worker — closed 2026-09-12, unachievable
 
-Goal blocks: `docs/OBJECTIVES.md` §§ G12, G13. Task breakdowns: `docs/TASKS-G12.md`
-(blocked by G7, G10) and `docs/TASKS-G13.md` (blocked by G9, G11).
+Task breakdown: `docs/TASKS-G12.md`. Goal block and the dated stop-condition note:
+`docs/OBJECTIVES.md` § G12. Measurements: `docs/TESTING.md`.
 
-Both close gaps this release recorded rather than new ideas: G12 removes the tolerated
-"Importing a module script failed" allowance in `overlays.spec.ts` by serving the worker
-from a real same-origin URL, and G13 gives saved points and lines the geometry editing
-areas have had since G6. No box in either file has been started; every one is `[ ]`.
+The goal rested on WebKit now intercepting a same-origin worker *script* request with a
+service worker — the limitation G5's blob-URL workaround exists to route around. perf-probe
+measured it and the answer is no for the case that matters: on a network-blocked reload the
+worker load fails and the service worker never sees the request. Online, and offline within
+an already-loaded document, interception *does* now work, and Chromium is fine throughout —
+which is why the four-cell grid is recorded rather than the verdict alone. "WebKit now
+intercepts worker loads" is true and insufficient, and anyone reopening this should show
+the offline-reload cell has changed before doing so.
 
-G12 carries a stop condition rather than an assumption. It depends on WebKit intercepting
-a same-origin worker script request, which is the limitation G5's blob exists to work
-around; if that has not changed, the goal is unachievable as written and the current
-allowance is the honest state of the world.
+Consequences, all deliberate: the blob-URL workaround stays load-bearing, and
+`overlays.spec.ts` keeps tolerating exactly two WebKit messages offline while failing on
+any other page error. That allowance is the honest state of the world, not a shortcut.
+
+Closing a goal because the thing it assumed turned out to be false is a result, and the
+stop condition was written into the goal precisely so this outcome would not read as a
+failure to deliver.
+
+# G13 — Move saved points and lines — planned, not started
+
+Goal block: `docs/OBJECTIVES.md` § G13. Task breakdown: `docs/TASKS-G13.md` (blocked by
+G9, G11).
+
+Gives saved points and lines the geometry editing areas have had since G6. No migration:
+`save_feature_tx`'s conflict path already sets `geom`, so `db reset` and a clean types diff
+are the gate asserting none was added. No box has been started; every one is `[ ]`.

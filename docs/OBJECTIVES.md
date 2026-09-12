@@ -395,6 +395,27 @@ beyond whatever the new worker URL needs to be cacheable. The `docs/TESTING.md` 
 around locks and measurement. Anything about overlays other than that one tolerated-error
 allowance.
 
+> **Stop condition invoked 2026-09-12 — this goal is closed as unachievable, and the
+> tolerated allowance in `overlays.spec.ts` stays.** Measured by perf-probe: WebKit's
+> service worker never receives a same-origin worker *script* request on a network-blocked
+> reload — the worker load fails and the service worker sees nothing at all — so the
+> offline guarantee this goal exists to provide cannot be provided this way. G5's blob-URL
+> workaround remains load-bearing.
+>
+> The grid matters more than the verdict, because half of it is genuinely new and reads
+> like a reason to reopen this:
+>
+> | | WebKit | Chromium |
+> |---|---|---|
+> | Online | **intercepted** — new since G5 | fine |
+> | Offline, same document | cache-served | fine |
+> | Offline, after reload | **fails; SW never sees the request** | fine |
+>
+> "WebKit now intercepts worker loads" is true and insufficient: interception online and
+> in an already-loaded document does nothing for the case that matters, a reload with no
+> network. Anyone reopening this should first show that the bottom-left cell has changed.
+> Full measurements: `docs/TESTING.md`.
+
 **blocked_by**
 G7, G10.
 
