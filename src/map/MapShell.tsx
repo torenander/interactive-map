@@ -68,14 +68,25 @@ import {
 // nothing decodes vector tiles and the map renders background only. Point
 // MapLibre at the worker bundle we resolve ourselves.
 //
-// G5 addendum: WebKit's service worker does not intercept requests for a
-// dedicated Worker's script (interception there only covers document/
-// main-thread fetches, not worker script loading) — a network-blocked
-// reload would fail to spawn the worker at all even though the file is
-// precached. Fetch the worker script through a plain `fetch` first (which
-// the service worker *does* intercept and can serve from its precache) and
-// hand MapLibre a blob URL built from that response, so the browser never
-// issues a separate, uninterceptable network request for the worker file.
+// G5 addendum, corrected under G12 (2026-09-12): a network-blocked reload
+// fails to spawn the worker from a same-origin URL even though the file is
+// precached, because WebKit's service worker never sees the request. Fetch
+// the worker script through a plain `fetch` first (which the service worker
+// *does* intercept and can serve from its precache) and hand MapLibre a blob
+// URL built from that response, so the browser never issues a separate,
+// uninterceptable network request for the worker file.
+//
+// Read the first sentence precisely before removing any of this. It used to
+// say WebKit does not intercept worker script requests at all; that is no
+// longer true. Measured in a standalone harness: online, WebKit's service
+// worker DOES see a same-origin worker script request. Offline it does not —
+// inside an already-loaded document the worker still spawns, but from the
+// evictable HTTP cache with the service worker uninvolved, and on a
+// network-blocked reload it fails outright. Only the offline case is what
+// this workaround buys, so testing interception online will show it working
+// and suggest the blob URL is removable. It is not. The four-cell grid and
+// the harness method are in docs/TESTING.md; G12 closed as unachievable on
+// exactly this evidence.
 // The top-level await blocks this module — and therefore the whole app,
 // since main.tsx imports it — until the worker source is in hand, so the
 // map is never created racing against an unresolved worker URL.
