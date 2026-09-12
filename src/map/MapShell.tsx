@@ -1169,6 +1169,22 @@ export default function MapShell() {
     }
   }, [session])
 
+  // Flush when a session ARRIVES with work still queued, not only when connectivity
+  // returns. The `online` listener below is not enough on its own: after a reload taken
+  // offline, Supabase cannot complete the token refresh `getSession` needs, so `session`
+  // is still null when `online` fires — `runFlush` returns at its first line and nothing
+  // ever calls it again. The queue is then stranded until the user happens to find "Sync
+  // now", which is data loss dressed as a banner. Measured against production: an area and
+  // a point queued offline, reloaded, reconnected, and never written (attack-app.md § 2).
+  //
+  // Safe to depend on the queue lengths: a failed flush leaves them unchanged, so this
+  // cannot spin, and a successful one drops them to zero, which returns at the guard.
+  useEffect(() => {
+    if (!mapReady || !session) return
+    if (queuedAreas.length === 0 && queuedMapFeatures.length === 0) return
+    void runFlush()
+  }, [mapReady, session, queuedAreas.length, queuedMapFeatures.length, runFlush])
+
   // Auto-flush when the browser regains connectivity. The manual "Sync now" button
   // (rendered below) exists because this event's timing/reliability under test
   // automation shouldn't be the only way to prove the flush works.
