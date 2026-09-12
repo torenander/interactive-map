@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { test, expect, type Page } from '@playwright/test'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { tap, tapAt } from './input'
+import { waitForRenderedFeatures as waitForRenderedLayer, SAVED_AREAS_FILL } from './rendered'
 
 type PointGeometry = { type: 'Point'; coordinates: number[] }
 type LineGeometry = { type: 'LineString'; coordinates: number[][] }
@@ -123,47 +124,22 @@ async function signIn(page: Page) {
   await expect(page.getByTestId('open-sign-in')).toBeHidden()
 }
 
-// A reload restores the map long before it restores the data: saved features arrive
-// after the session resolves and fetchFeatures returns. Waiting on the style alone raced
-// that and tapped bare ground. Wait on the same question the click handler asks —
-// queryRenderedFeatures over the feature layers — so the tap lands on something drawn.
-async function waitForRenderedFeatures(page: Page, expected: number) {
-  await page.waitForFunction((count) => {
-    const map = (
-      window as unknown as {
-        __map?: {
-          isStyleLoaded(): boolean
-          getLayer(id: string): unknown
-          queryRenderedFeatures(opts: { layers: string[] }): unknown[]
-        }
-      }
-    ).__map
-    if (!map || !map.isStyleLoaded()) return false
-    if (!map.getLayer('saved-features-circle')) return false
-    return (
-      map.queryRenderedFeatures({
-        layers: ['saved-features-circle', 'saved-features-line'],
-      }).length >= count
-    )
-  }, expected)
+// Layer ids a click on a saved feature has to hit. tests/e2e/rendered.ts owns the waiting;
+// these name which layer each assertion is actually about, which the old local helper
+// blurred by querying both at once — a line test could be satisfied by a rendered point.
+const SAVED_FEATURES_CIRCLE = 'saved-features-circle'
+const SAVED_FEATURES_LINE = 'saved-features-line'
+
+async function waitForRenderedPoints(page: Page, expected = 1) {
+  await waitForRenderedLayer(page, SAVED_FEATURES_CIRCLE, expected)
 }
 
-// Same race for saved areas.
-async function waitForRenderedAreas(page: Page, expected: number) {
-  await page.waitForFunction((count) => {
-    const map = (
-      window as unknown as {
-        __map?: {
-          isStyleLoaded(): boolean
-          getLayer(id: string): unknown
-          queryRenderedFeatures(opts: { layers: string[] }): unknown[]
-        }
-      }
-    ).__map
-    if (!map || !map.isStyleLoaded()) return false
-    if (!map.getLayer('saved-areas-fill')) return false
-    return map.queryRenderedFeatures({ layers: ['saved-areas-fill'] }).length >= count
-  }, expected)
+async function waitForRenderedLines(page: Page, expected = 1) {
+  await waitForRenderedLayer(page, SAVED_FEATURES_LINE, expected)
+}
+
+async function waitForRenderedAreas(page: Page, expected = 1) {
+  await waitForRenderedLayer(page, SAVED_AREAS_FILL, expected)
 }
 
 // The ids of rendered features currently flagged as queued. Read off the same source the
@@ -247,7 +223,7 @@ test('a point round-trips: place, rate, reload, edit, reload, delete, gone', asy
   // Survives a reload, and comes back where it was put.
   await page.reload()
   await waitForMap(page)
-  await waitForRenderedFeatures(page, 1)
+  await waitForRenderedPoints(page)
   const back = await pageXYOf(page, placed)
   expect(Math.abs(back.x - spot.x)).toBeLessThan(2)
   expect(Math.abs(back.y - spot.y)).toBeLessThan(2)
@@ -261,7 +237,7 @@ test('a point round-trips: place, rate, reload, edit, reload, delete, gone', asy
 
   await page.reload()
   await waitForMap(page)
-  await waitForRenderedFeatures(page, 1)
+  await waitForRenderedPoints(page)
   saved = await storedFeatures()
   expect(saved).toHaveLength(1)
   expect(saved[0].rating).toBe(-1)
@@ -309,7 +285,7 @@ test('a line round-trips: draw, rate, reload, edit, reload, delete, gone', async
 
   await page.reload()
   await waitForMap(page)
-  await waitForRenderedFeatures(page, 1)
+  await waitForRenderedLines(page)
 
   // Every vertex came back where it was tapped.
   for (let i = 0; i < vertices.length; i++) {
@@ -329,7 +305,7 @@ test('a line round-trips: draw, rate, reload, edit, reload, delete, gone', async
 
   await page.reload()
   await waitForMap(page)
-  await waitForRenderedFeatures(page, 1)
+  await waitForRenderedLines(page)
   saved = await storedFeatures()
   expect(saved).toHaveLength(1)
   expect(saved[0].rating).toBe(1)
@@ -378,7 +354,7 @@ test('a point inside a rated area stays tappable, and the area stays tappable ar
   await page.reload()
   await waitForMap(page)
   await waitForRenderedAreas(page, 1)
-  await waitForRenderedFeatures(page, 1)
+  await waitForRenderedPoints(page)
 
   const [savedPoint] = await storedFeatures()
   const pointXY = await pageXYOf(page, savedPoint.geometry.coordinates as number[])
@@ -484,7 +460,7 @@ test('a point saved with the network blocked queues, renders as queued, then flu
   // Survives a reload as a normal saved feature, no longer queued.
   await page.reload()
   await waitForMap(page)
-  await waitForRenderedFeatures(page, 1)
+  await waitForRenderedPoints(page)
   expect(await queuedFeatureIds(page)).toHaveLength(0)
   expect(await storedFeatures()).toHaveLength(1)
 })
@@ -535,4 +511,202 @@ test('the queued banner names both kinds when an area and a feature are queued t
   const { data: areasAfter } = await admin.from('areas').select('id').eq('user_id', userId)
   expect(areasAfter).toHaveLength(1)
   expect(await storedFeatures()).toHaveLength(1)
+})
+
+// ---------------------------------------------------------------------------
+// G13 — moving saved geometry
+// ---------------------------------------------------------------------------
+//
+// Drags use page.mouse deliberately, not the input helper: tests/e2e/input.ts wraps taps
+// because .tap() throws without hasTouch, but page.mouse drives both projects already,
+// which is why brush and draw-precision have always used it for strokes.
+
+async function dragOnCanvas(
+  page: Page,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+) {
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 6 })
+  await page.mouse.move(to.x, to.y, { steps: 6 })
+  await page.mouse.up()
+}
+
+// Open the sheet on a saved feature and start a move. Returns once the sheet has been
+// dismissed for dragging, which is what opening a move does — the backdrop covers the
+// whole map, so the handles are unreachable until it goes.
+async function startMove(page: Page, at: { x: number; y: number }) {
+  await tapAt(page, at.x, at.y)
+  await expect(page.getByTestId('rating-modal')).toBeVisible()
+  await settleSheet(page)
+  await tap(page.getByTestId('move-feature'))
+  await expect(page.getByTestId('rating-modal')).toBeHidden()
+}
+
+async function reopenAndSave(page: Page) {
+  await tap(page.getByTestId('reopen-pending'))
+  await expect(page.getByTestId('rating-modal')).toBeVisible()
+  await settleSheet(page)
+  await tap(page.getByTestId('save-area'))
+  await expect(page.getByTestId('rating-modal')).toBeHidden()
+}
+
+test('a saved point moves, and reloads at the new position rather than the old', async ({
+  page,
+}) => {
+  await signIn(page)
+  const origin = await canvasOrigin(page)
+  const spot = { x: origin.x + origin.width / 2, y: origin.y + origin.height / 2 - 50 }
+
+  await tap(page.getByTestId('start-point'))
+  await tapAt(page, spot.x, spot.y)
+  await rateAndSave(page, 1, 'moves later')
+  await waitForRenderedPoints(page)
+
+  const [before] = await storedFeatures()
+  const from = await pageXYOf(page, before.geometry.coordinates as number[])
+  const to = { x: from.x + 90, y: from.y - 70 }
+
+  await startMove(page, from)
+  await dragOnCanvas(page, from, to)
+
+  // The row is not touched until the sheet is saved: a move in progress is not a write.
+  const [during] = await storedFeatures()
+  expect(during.geometry).toEqual(before.geometry)
+
+  await reopenAndSave(page)
+
+  await page.reload()
+  await waitForMap(page)
+  await waitForRenderedPoints(page)
+
+  const [after] = await storedFeatures()
+  expect(after.id).toBe(before.id)
+  expect(after.geometry).not.toEqual(before.geometry)
+  const landed = await pageXYOf(page, after.geometry.coordinates as number[])
+  expect(Math.abs(landed.x - to.x)).toBeLessThan(3)
+  expect(Math.abs(landed.y - to.y)).toBeLessThan(3)
+})
+
+test('a saved line reshapes by its vertices, and the new shape survives a reload', async ({
+  page,
+}) => {
+  await signIn(page)
+  const origin = await canvasOrigin(page)
+  const cx = origin.x + origin.width / 2
+  const cy = origin.y + origin.height / 2
+  const vertices = [
+    { x: cx - 80, y: cy - 50 },
+    { x: cx, y: cy - 10 },
+    { x: cx + 80, y: cy - 50 },
+  ]
+
+  await tap(page.getByTestId('start-line'))
+  for (const vertex of vertices) await tapAt(page, vertex.x, vertex.y)
+  await tap(page.getByTestId('finish-line'))
+  await rateAndSave(page, -1, 'reshapes later')
+  await waitForRenderedLines(page)
+
+  const [before] = await storedFeatures()
+  const ring = before.geometry.coordinates as number[][]
+  expect(ring).toHaveLength(vertices.length)
+
+  // Reshape by the middle vertex: an end vertex would also move if the whole line slid,
+  // so the middle one is where "reshaped" and "dragged bodily" differ.
+  const middleAt = await pageXYOf(page, ring[1])
+  const to = { x: middleAt.x, y: middleAt.y + 90 }
+  await startMove(page, middleAt)
+  await dragOnCanvas(page, middleAt, to)
+  await reopenAndSave(page)
+
+  await page.reload()
+  await waitForMap(page)
+  await waitForRenderedLines(page)
+
+  const [after] = await storedFeatures()
+  const moved = after.geometry.coordinates as number[][]
+  expect(moved).toHaveLength(vertices.length)
+
+  // The middle vertex moved; the ends did not. That is the difference between reshaping a
+  // line and sliding it, and it is why the line's select flags leave the feature itself
+  // undraggable.
+  const movedMiddle = await pageXYOf(page, moved[1])
+  expect(Math.abs(movedMiddle.x - to.x)).toBeLessThan(3)
+  expect(Math.abs(movedMiddle.y - to.y)).toBeLessThan(3)
+  for (const end of [0, 2]) {
+    const back = await pageXYOf(page, moved[end])
+    const original = await pageXYOf(page, ring[end])
+    expect(Math.abs(back.x - original.x)).toBeLessThan(2)
+    expect(Math.abs(back.y - original.y)).toBeLessThan(2)
+  }
+})
+
+test('a cancelled move leaves the saved geometry untouched', async ({ page }) => {
+  await signIn(page)
+  const origin = await canvasOrigin(page)
+  const spot = { x: origin.x + origin.width / 2, y: origin.y + origin.height / 2 - 50 }
+
+  await tap(page.getByTestId('start-point'))
+  await tapAt(page, spot.x, spot.y)
+  await rateAndSave(page, 0, 'stays put')
+  await waitForRenderedPoints(page)
+
+  const [before] = await storedFeatures()
+  const from = await pageXYOf(page, before.geometry.coordinates as number[])
+
+  await startMove(page, from)
+  await dragOnCanvas(page, from, { x: from.x + 100, y: from.y + 80 })
+  await tap(page.getByTestId('cancel-edit'))
+
+  // Untouched in the database, and back on screen where it was saved — the session held
+  // the moved copy, so dropping it is the whole of the undo.
+  const [after] = await storedFeatures()
+  expect(after.geometry).toEqual(before.geometry)
+
+  await waitForRenderedPoints(page)
+  const still = await pageXYOf(page, after.geometry.coordinates as number[])
+  expect(Math.abs(still.x - from.x)).toBeLessThan(2)
+  expect(Math.abs(still.y - from.y)).toBeLessThan(2)
+})
+
+test('a move made with the network blocked queues, and flushes to the new position', async ({
+  page,
+  context,
+}) => {
+  await signIn(page)
+  const origin = await canvasOrigin(page)
+  const spot = { x: origin.x + origin.width / 2, y: origin.y + origin.height / 2 - 50 }
+
+  await tap(page.getByTestId('start-point'))
+  await tapAt(page, spot.x, spot.y)
+  await rateAndSave(page, 1, 'moved underground')
+  await waitForRenderedPoints(page)
+
+  const [before] = await storedFeatures()
+  const from = await pageXYOf(page, before.geometry.coordinates as number[])
+  const to = { x: from.x + 80, y: from.y - 60 }
+
+  // setOffline is the whole block — see the note on the earlier offline test.
+  await context.setOffline(true)
+  await startMove(page, from)
+  await dragOnCanvas(page, from, to)
+  await reopenAndSave(page)
+
+  // Queued, not saved: the point shows at its new position carrying `queued`, while the
+  // row still holds the old geometry. Rendering it as saved before the server has it is
+  // exactly what CLAUDE.md forbids.
+  await expect.poll(() => queuedFeatureIds(page)).toHaveLength(1)
+  const [during] = await storedFeatures()
+  expect(during.geometry).toEqual(before.geometry)
+
+  await context.setOffline(false)
+  await expect.poll(() => queuedFeatureIds(page), { timeout: 20_000 }).toHaveLength(0)
+
+  const [after] = await storedFeatures()
+  expect(after.id).toBe(before.id)
+  expect(after.geometry).not.toEqual(before.geometry)
+  const landed = await pageXYOf(page, after.geometry.coordinates as number[])
+  expect(Math.abs(landed.x - to.x)).toBeLessThan(3)
+  expect(Math.abs(landed.y - to.y)).toBeLessThan(3)
 })
