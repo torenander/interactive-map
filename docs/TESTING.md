@@ -8,9 +8,19 @@
 - Rating validation
 - Schema constraints against a local Supabase instance (checks, cascades, RLS isolation)
 
-**E2E (Playwright, iPhone 14 viewport, 390x844)** — one flow per goal, not exhaustive coverage:
+**E2E (Playwright)** — one flow per goal, not exhaustive coverage. Eleven spec files run
+across two projects: `--project=mobile` (WebKit, iPhone 14 at 390x844, 37 tests — every
+spec) and `--project=desktop --workers=1` (Chromium at 1440x900, 36 tests; the flag is
+required, see the G11 amendment in `docs/OBJECTIVES.md`).
 - `map-shell.spec.ts` — map renders, viewport, attribution, geolocate
 - `mvp-loop.spec.ts` — draw, rate, save, reload, edit, delete
+- `draw-precision.spec.ts` — vertex handles, explicit finish, snapping to saved borders
+- `touch-draw.spec.ts` — the WebKit ghost-click race; mobile only, by design
+- `brush.spec.ts` — paint, erase, stroke undo, one polygon on release
+- `points-lines.spec.ts` — point and line round trips, moves, offline queue
+- `overlays.spec.ts` — toggles, attribution, same-origin, offline
+- `desktop.spec.ts` — mouse and keyboard behaviours
+- `perf-load.spec.ts` — no whole-archive download, worker not serialized
 - `offline.spec.ts` — save with network blocked, flush on reconnect
 - `offline-map.spec.ts` — tiles from cache with network blocked
 
@@ -247,8 +257,8 @@ checkout, or serialize them.
 ### The mobile project runs every spec, on purpose
 
 The mobile project sets no `testMatch`, so it runs all of `tests/e2e/` — including
-`desktop.spec.ts`. Mobile is 33 tests, not 27: the original suite plus the six desktop
-ones. This began as an oversight and is kept deliberately, because the WebKit run of
+`desktop.spec.ts`. Mobile is 37 tests, not the 27 it began at: every spec, including the six
+desktop ones and G13's additions. This began as an oversight and is kept deliberately, because the WebKit run of
 `desktop.spec` is what caught the rating sheet's Tab-containment bug. Coverage that catches
 real bugs by accident is worth keeping once you know about it.
 

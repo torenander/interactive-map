@@ -23,8 +23,9 @@ npm run dev
 Test:
 
 ```bash
-npm run test       # vitest, unit
-npm run test:e2e   # playwright, mobil viewport
+npm run test                                      # vitest, unit
+npm run test:e2e -- --project=mobile              # playwright, WebKit 390x844
+npm run test:e2e -- --project=desktop --workers=1 # playwright, Chromium 1440x900
 ```
 
 Se `docs/TESTING.md` för vad som testas och `docs/ARCHITECTURE.md` /

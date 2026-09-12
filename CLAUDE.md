@@ -29,7 +29,8 @@ MapLibre GL JS, Protomaps pmtiles, Terra Draw, Vite, React, TypeScript, Tailwind
 npm run dev
 npm run build
 npm run test
-npm run test:e2e
+npm run test:e2e -- --project=mobile              # WebKit, 390x844, every spec
+npm run test:e2e -- --project=desktop --workers=1 # Chromium, 1440x900; the flag is required
 npx supabase db reset
 ```
 
@@ -37,6 +38,6 @@ npx supabase db reset
 
 - `docs/OBJECTIVES.md` — what to build next, and the exit criteria that decide when it is done.
 - `docs/ARCHITECTURE.md` — why each technology and geometry decision was made.
-- `docs/DATA-MODEL.md` — schema, migrations 0001–0004, write queue, GeoJSON export.
+- `docs/DATA-MODEL.md` — schema, migrations 0001–0009, write queue, GeoJSON export.
 - `docs/TESTING.md` — what is tested, what deliberately is not, and the test commands.
 - `docs/CLAUDE-MD-INSTRUCTIONS.md` — the rules this file is written against.
