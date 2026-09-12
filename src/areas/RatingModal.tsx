@@ -1,7 +1,7 @@
 // Bottom sheet for rating + commenting on an area. SPEC.md § Field UX: dismissible with
 // one thumb, and dismissing must not lose the drawn geometry — this component only ever
 // reports "dismiss" up to MapShell, which decides what that means for the pending draw.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 export type RatingModalMode = "create" | "edit";
 
@@ -14,6 +14,13 @@ type RatingModalProps = {
   onDismiss: () => void;
   onSave: (rating: number, comment: string) => void;
   onDelete?: () => void;
+  /**
+   * An extra control for the caller's session type, rendered below Save. A slot rather
+   * than a named prop because this sheet is shared by four session types and knows about
+   * none of them — G13 needs a "Move" here for saved features, and an area or a brushed
+   * selection must not grow a dead button to pay for it.
+   */
+  extraAction?: ReactNode;
 };
 
 const RATING_OPTIONS: { value: -1 | 0 | 1; label: string }[] = [
@@ -31,6 +38,7 @@ export default function RatingModal({
   onDismiss,
   onSave,
   onDelete,
+  extraAction,
 }: RatingModalProps) {
   const [rating, setRating] = useState(initialRating);
   const [comment, setComment] = useState(initialComment);
@@ -195,6 +203,8 @@ export default function RatingModal({
         >
           {saving ? "Saving…" : "Save"}
         </button>
+
+        {extraAction}
 
         {mode === "edit" && onDelete && (
           <button

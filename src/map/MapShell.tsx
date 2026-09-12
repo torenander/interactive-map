@@ -176,12 +176,15 @@ type PendingMapFeature = {
   geometry: FeatureGeometry
 }
 
-// An open edit session on a saved point or line. Unlike EditingArea this holds no
-// `drawId` and loads nothing into Terra Draw: G9's done_when asks for editing the rating,
-// not the geometry, so there is nothing to drag and no reason to stand the map into
-// select mode. Moving a saved point is a later goal, not a hidden half-built one.
+// An open edit session on a saved point or line. `drawId` is null for a plain
+// rating/comment edit and set once a MOVE is opened (G13) — at which point the feature is
+// loaded into Terra Draw's store under that id and withheld from the saved-features
+// source, exactly as EditingArea does for polygons. Cancelling needs no saved copy of the
+// original: `mapFeatures` is never mutated during a session, so dropping the session
+// brings the untouched geometry straight back on the next render.
 type EditingMapFeature = {
   id: string
+  drawId: string | null
   kind: FeatureKind
   rating: number
   comment: string
@@ -373,6 +376,8 @@ export default function MapShell() {
   pendingMapFeatureRef.current = pendingMapFeature
   const editingMapFeatureIdRef = useRef<string | null>(null)
   editingMapFeatureIdRef.current = editingMapFeature?.id ?? null
+  const movingFeatureIdRef = useRef<string | null>(null)
+  movingFeatureIdRef.current = editingMapFeature?.drawId ?? null
   // The hover affordance is only correct when nothing else owns the pointer: Terra Draw
   // and the brush set their own cursors, and overriding one mid-gesture would flicker.
   const hoverIdleRef = useRef(true)
@@ -607,6 +612,23 @@ export default function MapShell() {
                   },
                 },
               },
+              // G13. A point has one coordinate, so moving it is moving the feature;
+              // a line is reshaped by its coordinates and must not slide as a whole,
+              // which is the same reasoning that makes an area undraggable above.
+              [POINT_MODE]: {
+                feature: { draggable: true },
+              },
+              [LINESTRING_MODE]: {
+                feature: {
+                  draggable: false,
+                  coordinates: {
+                    draggable: true,
+                    // Adding or deleting vertices is out of scope for G13 — this moves
+                    // the vertices a line already has.
+                    midpoints: false,
+                  },
+                },
+              },
             },
           }),
           // One tap places a point and finishes it — there is no second vertex to wait
@@ -636,41 +658,55 @@ export default function MapShell() {
         if (!feature) return
         const drawId = String(id)
 
-        // Points and lines. A point finishes on its single tap; a line finishes on the
-        // "Finish line" control, which dispatches the same key polygons use. Both land
-        // here and go straight to the rating sheet — there is no select-mode hold,
-        // because G9 edits the rating, not the geometry (see EditingMapFeature).
-        if (feature.geometry.type === 'Point' || feature.geometry.type === 'LineString') {
-          const geometry = feature.geometry as FeatureGeometry
-          setPendingMapFeature({ drawId, kind: kindForGeometry(geometry), geometry })
-          setModalVisible(true)
-          setFeatureMode(null)
-          terraDraw.setMode(STATIC_MODE)
-          return
-        }
-
-        if (feature.geometry.type !== 'Polygon') return
-        const geometry = closeRing(feature.geometry as Polygon)
-
-        // A fresh draw closing its ring. Hand it to the rating sheet, then hold it in
-        // select mode rather than static so its vertices stay draggable while the sheet
-        // is up — G6 wants a vertex correctable before the first save, not only after.
+        // Split on the ACTION first, then the geometry. Before G13 the point/line branch
+        // ran unconditionally, because a finish on a feature could only ever mean a fresh
+        // placement. Once a saved feature can be dragged that stopped being true: the
+        // drag's finish was read as a new placement, which reopened the sheet and queued a
+        // second feature instead of moving the one in hand.
         if (context.action === 'draw') {
-          setPendingFeature({ drawId, geometry })
-          setModalVisible(true)
-          setIsDrawing(false)
-          terraDraw.setMode(SELECT_MODE)
-          terraDraw.selectFeature(id)
+          // A point finishes on its single tap; a line finishes on the "Finish line"
+          // control, which dispatches the same key polygons use. Both go straight to the
+          // rating sheet — no select-mode hold, because placement is finished and any
+          // later adjustment is a move session (G13).
+          if (feature.geometry.type === 'Point' || feature.geometry.type === 'LineString') {
+            const geometry = feature.geometry as FeatureGeometry
+            setPendingMapFeature({ drawId, kind: kindForGeometry(geometry), geometry })
+            setModalVisible(true)
+            setFeatureMode(null)
+            terraDraw.setMode(STATIC_MODE)
+            return
+          }
+          // A fresh ring closing. Hand it to the sheet, then hold it in select mode rather
+          // than static so its vertices stay draggable while the sheet is up — G6 wants a
+          // vertex correctable before the first save, not only after.
+          if (feature.geometry.type === 'Polygon') {
+            setPendingFeature({ drawId, geometry: closeRing(feature.geometry as Polygon) })
+            setModalVisible(true)
+            setIsDrawing(false)
+            terraDraw.setMode(SELECT_MODE)
+            terraDraw.selectFeature(id)
+          }
           return
         }
 
-        // Every other finish action is a coordinate-level edit of a feature already in
-        // the store: a dragged vertex, an inserted midpoint, a deleted coordinate. These
-        // used to hit an `action !== 'draw'` early return and be dropped, so a dragged
-        // vertex never reached save-area and area_cells was never rebuilt from it.
-        // Whichever session owns this id takes the new geometry.
-        setPendingFeature((prev) => (prev && prev.drawId === drawId ? { ...prev, geometry } : prev))
-        setEditingArea((prev) => (prev && prev.drawId === drawId ? { ...prev, geometry } : prev))
+        // Every other action is a coordinate-level edit of something already in the store:
+        // a dragged vertex, an inserted midpoint, a deleted coordinate, a dragged point.
+        // These used to hit an `action !== 'draw'` early return and be dropped, so an
+        // edit never reached the server. Whichever session owns this id takes the geometry.
+        if (feature.geometry.type === 'Polygon') {
+          const geometry = closeRing(feature.geometry as Polygon)
+          setPendingFeature((prev) =>
+            prev && prev.drawId === drawId ? { ...prev, geometry } : prev,
+          )
+          setEditingArea((prev) => (prev && prev.drawId === drawId ? { ...prev, geometry } : prev))
+          return
+        }
+        // A move session on a saved point or line (G13). Terra Draw hands back the
+        // geometry it now holds; the saved row is untouched until the sheet is saved.
+        const moved = feature.geometry as FeatureGeometry
+        setEditingMapFeature((prev) =>
+          prev && prev.drawId === drawId ? { ...prev, geometry: moved } : prev,
+        )
       })
 
       // Is there a saved point or line under this tap? Asked with a slop box rather than
@@ -700,6 +736,7 @@ export default function MapShell() {
 
         setEditingMapFeature({
           id: saved.properties.id,
+          drawId: null,
           kind: saved.properties.kind,
           rating: saved.properties.rating,
           comment: saved.properties.comment ?? '',
@@ -889,11 +926,16 @@ export default function MapShell() {
   useEffect(() => {
     if (!mapReady) return
     const source = map.current?.getSource(SAVED_FEATURES_SOURCE) as GeoJSONSource | undefined
+    const movingId = editingMapFeature?.drawId
+    const combined = combineMapFeatures(mapFeatures, queuedMapFeatures)
     source?.setData({
       type: 'FeatureCollection',
-      features: combineMapFeatures(mapFeatures, queuedMapFeatures),
+      // The feature under an open move is withheld for the same reason the area under an
+      // open edit is: Terra Draw is drawing it, with its handles, and painting it from
+      // here too would stack a stale copy under the live one.
+      features: movingId ? combined.filter((f) => f.properties.id !== movingId) : combined,
     })
-  }, [mapReady, mapFeatures, queuedMapFeatures])
+  }, [mapReady, mapFeatures, queuedMapFeatures, editingMapFeature])
 
   // Paint the current selection. Driven by state rather than written from the pointer
   // handlers so what is on screen is always what React last rendered from.
@@ -1189,9 +1231,34 @@ export default function MapShell() {
 
   // Drop an unsaved point/line session, taking its geometry out of Terra Draw's store.
   function clearMapFeatureSession() {
-    const drawId = pendingMapFeatureRef.current?.drawId
+    // Either a placement awaiting its rating, or a move session holding a saved feature.
+    const drawId = pendingMapFeatureRef.current?.drawId ?? movingFeatureIdRef.current
     if (drawId) draw.current?.removeFeatures([drawId])
     draw.current?.setMode(STATIC_MODE)
+  }
+
+  // Open a move on the saved feature currently in the sheet. Mirrors the area-edit
+  // session G6 built for polygons: load the geometry into Terra Draw so its handles are
+  // draggable, stand the map into select mode, and dismiss the sheet — whose backdrop
+  // covers the whole map, so it is what stands between the user and the handles.
+  async function handleStartMoveFeature() {
+    if (!editingMapFeature || editingMapFeature.drawId !== null) return
+    const terraDraw = await drawReady.current
+    if (!terraDraw) return
+    const { id, kind, geometry } = editingMapFeature
+    terraDraw.addFeatures([
+      {
+        id,
+        type: 'Feature',
+        geometry,
+        properties: { mode: kind === 'point' ? POINT_MODE : LINESTRING_MODE },
+      },
+    ])
+    terraDraw.setMode(SELECT_MODE)
+    terraDraw.selectFeature(id)
+    setEditingMapFeature((prev) => (prev ? { ...prev, drawId: id } : prev))
+    setModalVisible(false)
+    setSaveError(null)
   }
 
   // The brush core and h3-js are fetched here, not at module load: 63,121 B gzip that the
@@ -1308,8 +1375,10 @@ export default function MapShell() {
   // dropping the session re-renders the area with its original, untouched geometry.
   function handleCancelEdit() {
     if (editingMapFeature) {
-      // Nothing was loaded into Terra Draw for a feature edit, so there is nothing to
-      // take back out — dropping the session is the whole of it.
+      // A rating-only session loaded nothing into Terra Draw; a move session (G13) did,
+      // and its copy has to come back out. Either way `mapFeatures` was never mutated, so
+      // dropping the session re-renders the feature at its saved position.
+      if (editingMapFeature.drawId) clearMapFeatureSession()
       setEditingMapFeature(null)
       setModalVisible(false)
       setSaveError(null)
@@ -1410,6 +1479,9 @@ export default function MapShell() {
     setSaveError(null)
     try {
       await deleteFeature(editingMapFeature.id)
+      // Reachable with a move open — the sheet can be reopened from the pill mid-move —
+      // so the draw store's copy has to go as well, or it outlives the row.
+      if (editingMapFeature.drawId) clearMapFeatureSession()
       setMapFeatures((prev) => prev.filter((f) => f.properties.id !== editingMapFeature.id))
       setEditingMapFeature(null)
       setModalVisible(false)
@@ -1943,6 +2015,21 @@ export default function MapShell() {
               : editingMapFeature
                 ? () => void handleDeleteMapFeature()
                 : undefined
+          }
+          // Only for a saved feature, and only when a move is not already open: reopening
+          // the sheet mid-move must not offer to start a second one. Areas reach their
+          // handles by tapping the shape itself (G6), so nothing here applies to them.
+          extraAction={
+            editingMapFeature && editingMapFeature.drawId === null ? (
+              <button
+                type="button"
+                data-testid="move-feature"
+                onClick={() => void handleStartMoveFeature()}
+                className="mb-2 flex min-h-11 w-full items-center justify-center rounded-lg border border-gray-300 text-sm font-medium text-gray-700"
+              >
+                {editingMapFeature.kind === 'point' ? 'Move point' : 'Reshape line'}
+              </button>
+            ) : undefined
           }
         />
       )}
