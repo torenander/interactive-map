@@ -36,6 +36,28 @@ even locally. That means finding 2's fix (`807d27e`, the `flushTrigger` effect) 
 proves the trigger *logic* and passes, but the real integration after an offline reload
 still loses the write on some runs. This is a data-loss reliability bug and it blocks PR #4.
 
+### Confirmed by ISOLATION, not contention (2026-09-13, this session)
+
+A first measurement of this was contaminated (run concurrently with another agent's e2e
+against the shared local Supabase, plus a `kill -9` on the shared preview port) — the exact
+concurrent-contention trap. It was then **re-measured in true isolation**: exclusive e2e
+lock, dedicated `PREVIEW_PORT=4373`, quiet stack, no other agent, `--workers=1
+--retries=0`. Result: **2 failures in ~8 runs (~20–25%)**, e.g. runs passing in 14–16s and
+others timing out at 30s. So the intermittency is a **real app bug**, not test contention,
+not CI-only, not a tight wall clock.
+
+**Captured failure state** (trace retained under `test-results/offline-*/`): at the
+`toBeHidden` on `queued-banner` after `setOffline(false)`, the banner is still
+`visible` for the full 30s, reading **"1 area queued — offline, will sync"**, and the
+server holds 0 rows. So the reconnect flush simply never drains the queue on the failing
+runs — the queue is stranded exactly as the production report described. Next step: capture
+the app console during a failing run and determine why neither the `online`-event
+`runFlush` nor the `flushTrigger` effect fires-to-completion — suspect the `online` handler
+runs once while a dep the effect watches never subsequently transitions, so nothing
+re-fires. (The banner still saying "offline" on failure is a strong hint — check whether
+`navigator.onLine` / the `online` event and the app's own online state actually update in
+the failing runs.)
+
 Investigate the actual runtime ordering after `page.reload()` while offline, then
 `setOffline(false)`:
 - Is `session` genuinely non-null when the `online` event fires (fresh token → supabase
