@@ -1,7 +1,8 @@
 # Handoff — areamap
 
 Written 2026-09-10 at the end of the build-out session, updated 2026-09-11 when G6–G10
-shipped and again that evening when G11 did. Audience: the next session (human or agent)
+shipped, again that evening when G11 did, and on 2026-09-12 for G13. Audience: the next
+session (human or agent)
 picking this project up. Everything below is verified, not assumed; where something was
 still in flight it says so. Nothing is in flight now.
 
@@ -15,14 +16,18 @@ reasons: `docs/ARCHITECTURE.md`.
 
 ## State at handoff
 
-**All eleven goals in `docs/OBJECTIVES.md` are done.** G1 map shell, G2 schema+client,
-G3 MVP loop, G4 offline writes, G5 installable PWA (2026-09-10); G6 drawing precision,
-G7 load performance, G8 brush painting, G9 points and lines, G10 open-data overlays, and
-G11 desktop (2026-09-11, G11 that evening). Each closed only after its `done_when`
-commands exited 0, re-run independently of the implementer. Full log with dates and
-deviations: `docs/TASKS.md`; per-goal breakdowns in `docs/TASKS-G*.md`.
+**Twelve of the thirteen goals in `docs/OBJECTIVES.md` are done; G12 is closed as
+unachievable, which is a result rather than an omission — see its dated note.** G1 map
+shell, G2 schema+client, G3 MVP loop, G4 offline writes, G5 installable PWA
+(2026-09-10); G6 drawing precision, G7 load performance, G8 brush painting, G9 points
+and lines, G10 open-data overlays, and G11 desktop (2026-09-11, G11 that evening); G13
+moving saved points and lines (2026-09-12). G12 would have served MapLibre's worker from
+a same-origin URL; it was closed when the browser behaviour it assumed turned out not to
+hold offline. Each closed only after its `done_when` commands exited 0, re-run
+independently of the implementer. Full log with dates and deviations: `docs/TASKS.md`;
+per-goal breakdowns in `docs/TASKS-G*.md`.
 
-What G6–G11 added, in one line each:
+What G6–G13 added, in one line each:
 
 - **G6** every placed vertex visible and draggable, an explicit finish control, snapping
   to saved borders, and geometry edits routed through `save-area` so cells rebuild.
@@ -35,6 +40,9 @@ What G6–G11 added, in one line each:
   `save-feature` edge function, with their own offline queue entries.
 - **G10** TfL stops, OS Open Greenspace and DEFRA road noise as static same-origin
   extracts under `public/overlays/`, toggled from the map, cached for offline use.
+- **G13** a saved point drags to a new position and a saved line's vertices reshape it,
+  at both viewports, through the same `save-feature` path and offline queue as any other
+  feature write. No migration: `save_feature_tx` already updated `geom`.
 - **G11** desktop usability: sessions that Escape can actually cancel — including a fix
   for `Enter` re-firing a focused toolbar button, which was deleting a second vertex
   rather than finishing the ring — map rotation removed instead of made recoverable,
