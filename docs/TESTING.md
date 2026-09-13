@@ -21,7 +21,7 @@ required, see the G11 amendment in `docs/OBJECTIVES.md`).
 - `overlays.spec.ts` — toggles, attribution, same-origin, offline, reachable mid-session
 - `desktop.spec.ts` — mouse and keyboard behaviours
 - `perf-load.spec.ts` — no whole-archive download, worker not serialized
-- `offline.spec.ts` — save with network blocked, flush on reconnect
+- `offline.spec.ts` — save with network blocked, flush on reconnect, reload taken offline
 - `offline-map.spec.ts` — tiles from cache with network blocked
 
 **Not tested** — third-party surface, low value:
@@ -36,6 +36,16 @@ required, see the G11 amendment in `docs/OBJECTIVES.md`).
 - A test that asserts nothing about behaviour is not a test. `expect(true).toBe(true)`, a test with no assertion, or a test that only checks a function did not throw does not count towards a goal's exit criteria.
 - Do not change an existing assertion to make a new implementation pass. If the assertion is wrong, say so and stop.
 - Mobile viewport first. Desktop is verified after, never instead.
+- Assert on the server, not on the banner, for anything that claims a write landed. The
+  offline-reload test in `offline.spec.ts` polls `admin.from('areas')` for the row; the
+  queued banner disappearing is local state and would go green on a queue that emptied
+  without writing anything.
+- One test carries a raised timeout: the offline-reload test runs at `test.setTimeout(120_000)`
+  with a 60s server poll, because the app's own recovery ladder (`nextFlushRetry`, retries at
+  1s/2s/4s/8s/15s/30s) is 60s long and the test has to outlast it. That is a ceiling, not an
+  expectation — the passing path lands in a few hundred milliseconds. Every other test keeps
+  the 30s default, and raising one to hide a slow or failing path is exactly what the rule
+  above forbids.
 
 ## One machine, one run at a time
 

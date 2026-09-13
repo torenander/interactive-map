@@ -178,23 +178,30 @@ test('save with the network blocked queues instead of succeeding, then flushes o
 // Chromium only: `page.reload()` under `setOffline(true)` raises "WebKit encountered an
 // internal error" in Playwright's WebKit, so the scenario cannot be driven on mobile.
 //
-// HONEST LIMIT — this test passes with AND without the fix, so it is not a regression test
-// for it. Against a local stack the stored token is seconds old, so Supabase restores the
-// session from storage with no network call and `session` is never null; the window the
-// defect needs does not open. In production it does: the reload happens offline, the token
-// refresh that getSession needs cannot complete, `session` stays null through the `online`
-// event, and nothing re-fires the flush when it finally arrives. Attempts to force the
-// ordering by delaying `/auth/v1/token` changed nothing, because locally that call is never
-// made. Reproducing it here would need a deliberately stale stored token.
+// WHAT THIS DOES AND DOES NOT GATE. It cannot fail over the null-session window described
+// above: against a local stack the stored token is seconds old, so Supabase restores the
+// session from storage with no network call and `session` is never null. That half stays
+// gated by tests/unit/flush-trigger.test.ts.
 //
-// What this test does buy: the journey itself is now covered end to end, so a future change
-// that breaks offline-reload survival in a way localhost CAN see will be caught.
+// It DOES gate the second half of the same defect (task #44), which is a race rather than a
+// state, and which localhost reproduces perfectly well: the IndexedDB queue read lands a few
+// milliseconds before the browser fires `online`, so the flush already in flight is the
+// offline one, the `online` request is dropped on the in-flight guard, and because a failed
+// flush leaves the queue lengths unchanged nothing ever re-fires. Measured on this spec with
+// the app console captured: 1 failure in 16 isolated runs before the fix, 0 in 16 after.
+//
+// It asserts on the SERVER, not the banner. The banner hiding is a render of local state; a
+// queue that empties without the row landing would satisfy it and still be data loss.
 test('a queued write survives a reload taken while offline, and flushes on reconnect', async ({
   page,
   context,
   browserName,
 }) => {
   test.skip(browserName !== 'chromium', 'page.reload() while offline errors in WebKit')
+  // The default 30s cannot contain the 60s server poll below. Raised deliberately, and only
+  // for this test: the point is to give a genuinely-working app every chance to land the
+  // write before the test calls it lost, not to paper over a slow one.
+  test.setTimeout(120_000)
 
   // This file's tests share one user, and the test above leaves its flushed area behind.
   // Start from a clean slate so "the server holds nothing" means this test's nothing.
@@ -229,8 +236,23 @@ test('a queued write survives a reload taken while offline, and flushes on recon
   // drains only when the user finds a button is a queue that loses data.
   await context.setOffline(false)
 
-  await expect(page.getByTestId('queued-banner')).toBeHidden({ timeout: 30_000 })
-  const { data: afterFlush, error } = await admin.from('areas').select('id').eq('user_id', userId)
-  expect(error).toBeNull()
-  expect(afterFlush).toHaveLength(1)
+  // Polls the database, because the row reaching the server is the only thing that proves
+  // the queued write survived. The window is sized to the app's own recovery ladder rather
+  // than guessed: a flush that leaves work queued while online retries at 1s, 2s, 4s, 8s,
+  // 15s and 30s (src/offline/flushTrigger.ts § nextFlushRetry), so 60s is the last moment a
+  // working app can still land the write. Anything slower is a real failure, not a slow CI
+  // box. The happy path takes a few hundred milliseconds; this ceiling is only ever paid by
+  // a genuine regression, which is why the test-level timeout above has to allow for it.
+  await expect
+    .poll(
+      async () => {
+        const { data } = await admin.from('areas').select('id').eq('user_id', userId)
+        return data?.length ?? 0
+      },
+      { timeout: 60_000, intervals: [250, 250, 500, 1_000, 2_000] },
+    )
+    .toBe(1)
+
+  // And only then the UI, which must stop claiming the write is pending once it is not.
+  await expect(page.getByTestId('queued-banner')).toBeHidden({ timeout: 10_000 })
 })
