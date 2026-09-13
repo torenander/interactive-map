@@ -18,7 +18,7 @@ required, see the G11 amendment in `docs/OBJECTIVES.md`).
 - `touch-draw.spec.ts` — the WebKit ghost-click race; mobile only, by design
 - `brush.spec.ts` — paint, erase, stroke undo, one polygon on release
 - `points-lines.spec.ts` — point and line round trips, moves, offline queue
-- `overlays.spec.ts` — toggles, attribution, same-origin, offline
+- `overlays.spec.ts` — toggles, attribution, same-origin, offline, reachable mid-session
 - `desktop.spec.ts` — mouse and keyboard behaviours
 - `perf-load.spec.ts` — no whole-archive download, worker not serialized
 - `offline.spec.ts` — save with network blocked, flush on reconnect
@@ -320,9 +320,14 @@ people to re-run it, which is how a real failure gets waved through.
 
 The same applies in `ci.yml`, where it is now applied: the e2e gate is two steps, one per
 project, and the desktop step carries `--workers=1`. A bare `npm run test:e2e` runs both
-projects together — today 73 executions, 37 in the mobile lane plus 36 in the desktop one,
+projects together — today 79 executions, 40 in the mobile lane plus 39 in the desktop one,
 where 27 used to run — at default parallelism on a two-core runner, which is exactly the
 configuration this section says does not work.
+
+That figure is measured from a run, not incremented by hand, and it had drifted by two
+before the two overlay-reachability tests took it to 79: a count in prose has no gate, so
+it is stale from the moment the next spec lands. Re-read it from the reporter's own total
+rather than trusting the number above.
 
 **That gap was recorded here and not applied, and CI failed on it twice.** Writing a
 constraint down is not the same as enforcing it, and nothing gated the distance between the
