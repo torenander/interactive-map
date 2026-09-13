@@ -1,8 +1,9 @@
-# Session handoff — 2026-09-13 (verification-sweep fixes, mid-flight)
+# Session handoff — 2026-09-13 (verification-sweep fixes, resolved)
 
 Written for the next session picking up the adversarial-sweep fix work. Everything
-below is verified against the tree, not assumed. The one thing genuinely open and
-important is the **intermittent offline-reload flush** — read that section first.
+below is verified against the tree, not assumed. The intermittent offline-reload
+flush — the finding that blocked PR #4 — is **root-caused, fixed and independently
+re-verified** (`9215786`/`0a39c8d`); the section below records the mechanism.
 
 ## Branch / PR state
 
@@ -16,11 +17,32 @@ important is the **intermittent offline-reload flush** — read that section fir
   - `2609ec8` test(offline): gate the session-arrival flush trigger (pure-function unit test)
   - `a51af27` test(overlays): the sheet must be reachable while a session is open (finding 3)
   - `66168c0` fix(overlays): keep Layers reachable while a session is open (finding 3)
-- **PR #4 CI is RED** — not mergeable yet. Cause is the offline-reload e2e below, plus
-  intermittent Docker Hub image-pull rate limits on `npx supabase start` (infra noise;
-  re-running the job clears those, they are not code).
+  - `7be671d`/`46f6967`/`8ea3976` docs: handoff + e2e-count corrections
+  - `9215786` fix(offline): coalesce a flush requested mid-flush, retry one that left
+    work queued (the fix for the section below)
+  - `0a39c8d` test(offline): gate the reload flush on the server row, not the banner
+- Earlier CI reds were the offline-reload e2e below (now fixed) plus intermittent Docker
+  Hub image-pull rate limits on `npx supabase start` (infra noise; re-running the job
+  clears those, they are not code).
 
-## TOP PRIORITY — offline-reload flush is INTERMITTENT (not just slow)
+## RESOLVED — offline-reload flush was a dropped mid-flight request
+
+Fixed in `9215786` (app) + `0a39c8d` (test hardening). Root cause, from an instrumented
+failing run: after an offline reload the IndexedDB queue read can land a few ms before
+the browser fires `online`, so the flush already in flight is the doomed offline one.
+The `online` handler's `runFlush` then hit the in-flight guard and was **discarded** —
+and since a failed flush changes nothing the `flushTrigger` effect watches, nothing ever
+re-fired. The session was non-null throughout (restores from storage offline) and the
+banner text is a static string, so neither of the original hypotheses held. The fix:
+a request arriving mid-flush is latched and served by another pass of the same flush
+(no await between the loop's exit check and the guard release, so no window remains),
+plus a bounded retry ladder (1s–30s) for a pass that leaves work queued while online.
+Independently re-verified: offline spec 10/10 and 16/16 isolated loops, full desktop
+suite 39/39, mobile overlays 6/6, unit 102/102, build green.
+
+The original investigation record follows, kept for the mechanism detail.
+
+## (was TOP PRIORITY) — offline-reload flush is INTERMITTENT (not just slow)
 
 `tests/e2e/offline.spec.ts:192` ("a queued write survives a reload taken while offline,
 and flushes on reconnect") **fails on CI and is flaky locally**. Measured this session on
@@ -86,16 +108,19 @@ integration path.
   close: if it works, add a one-line note to docs/TESTING.md and drop it; if it fails, it
   is an infra/transport question, still no repo fix. Protocol in
   `scratchpad/webkit-auth-mechanism.md`.
-- **Finding 3 (task #42, overlay hang) — FIXED** on this branch (`a51af27`/`66168c0`),
-  pending the overlay-fix agent's final gate results and lead re-verification.
+- **Finding 3 (task #42, overlay hang) — FIXED AND VERIFIED** on this branch
+  (`a51af27`/`66168c0`); independently re-run: desktop suite 39/39, mobile
+  overlays.spec 6/6.
 - **Move-precedence coverage gap (task #43)**: the G13 move-session precedence collisions
   (brush-during-move, tapping a second feature mid-move, double-tap ghost-click on Move)
   were never exercised by the field attack. One focused desktop pass. Details in
   `scratchpad/attack-app.md`.
-- **PostgREST info disclosure (task #39, low)**: unauthenticated 42501/PGRST204 responses
-  name grants and columns (PostgREST defaults). Not a broken guard — every write path
-  auth-checks before validation and all table writes are revoked (verified against the
-  hosted project this session). Config-hardening candidate, weigh against debuggability.
+- **PostgREST info disclosure (task #39, low) — ACCEPTED RISK, documented** in
+  docs/TESTING.md. Metadata only (table/column names, already visible in the shipped JS
+  bundle); no data leaks; writes revoked outside `save_area_tx`. The PostgREST
+  error-verbosity knob (`client-error-verbosity`) is not exposed on hosted Supabase, and
+  moving reads behind RPCs is disproportionate for a low finding. Revisit only if the
+  knob ships or reads move behind RPCs anyway.
 
 ## What the sweep confirmed HELD (don't re-litigate)
 

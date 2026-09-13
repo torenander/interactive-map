@@ -29,6 +29,11 @@ required, see the G11 amendment in `docs/OBJECTIVES.md`).
 - Tile loading and pmtiles range requests
 - Terra Draw internals
 
+**Accepted risk** — unauthenticated PostgREST error responses (42501/PGRST204) disclose
+table and column names. Accepted: the same names ship in the public JS bundle, no data
+leaks, writes are revoked outside `save_area_tx` (migration 0007), and the PostgREST
+error-verbosity knob is not exposed on hosted Supabase.
+
 ## Rules
 
 - Every PR that touches `src/areas` or a migration needs a test.
