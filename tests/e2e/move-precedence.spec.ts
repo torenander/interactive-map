@@ -223,10 +223,17 @@ test('starting a brush session is blocked while a point move is open, and the mo
   await startMove(page, from)
 
   // The whole entry-point row — brush included — is unreachable while the move is open.
-  await expect(page.getByTestId('start-brush')).toBeHidden()
-  await expect(page.getByTestId('start-drawing')).toBeHidden()
-  await expect(page.getByTestId('start-point')).toBeHidden()
-  await expect(page.getByTestId('start-line')).toBeHidden()
+  // Checked concurrently (not four sequential awaits) and with a generous timeout: this
+  // suite runs in CI's 2-worker mobile lane alongside the rest of the suite, and a
+  // sequential stack of default-timeout polls is the part of this test most exposed to
+  // that lane's own documented resource contention (see the workflow's own comment on
+  // the desktop project needing --workers=1 for the same reason).
+  await Promise.all([
+    expect(page.getByTestId('start-brush')).toBeHidden({ timeout: 10_000 }),
+    expect(page.getByTestId('start-drawing')).toBeHidden({ timeout: 10_000 }),
+    expect(page.getByTestId('start-point')).toBeHidden({ timeout: 10_000 }),
+    expect(page.getByTestId('start-line')).toBeHidden({ timeout: 10_000 }),
+  ])
 
   // The move itself is unharmed by the attempt to reach past it.
   const to = { x: from.x + 90, y: from.y - 70 }
@@ -244,7 +251,7 @@ test('starting a brush session is blocked while a point move is open, and the mo
   expect(Math.abs(landed.y - to.y)).toBeLessThan(3)
 
   // And the entry points come back once the session ends.
-  await expect(page.getByTestId('start-brush')).toBeVisible()
+  await expect(page.getByTestId('start-brush')).toBeVisible({ timeout: 10_000 })
 })
 
 // ---------------------------------------------------------------------------
