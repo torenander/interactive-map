@@ -45,7 +45,7 @@ import RatingModal from '../areas/RatingModal'
 import { deleteArea, fetchAreas, OfflineWriteError, saveArea, type AreaFeature } from '../db/client'
 import { useSession } from '../auth/useSession'
 import { flushQueuedWrites } from '../offline/flush'
-import { shouldFlushOnSessionArrival } from '../offline/flushTrigger'
+import { nextFlushRetry, shouldFlushOnSessionArrival } from '../offline/flushTrigger'
 import { enqueueWrite, listQueuedWrites, type QueuedWrite } from '../offline/queue'
 import {
   deleteFeature,
@@ -319,6 +319,18 @@ export default function MapShell() {
   // nothing — see handleStartDrawing.
   const drawReady = useRef<Promise<TerraDraw | null>>(Promise.resolve(null))
   const flushingRef = useRef(false)
+  // A flush requested while one is already running. Remembered rather than dropped — see
+  // the comment on `runFlush`; dropping it is what stranded a queue after an offline
+  // reload.
+  const flushAgainRef = useRef(false)
+  // The armed retry timer and how many retries this online episode has spent, for
+  // `nextFlushRetry`. Both live in refs: a re-render must neither cancel an armed retry
+  // nor reset the ladder.
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const retryAttemptRef = useRef(0)
+  // `runFlush` is rebuilt whenever `session` changes; the retry timer is armed once and
+  // must call the CURRENT one, not the closure that armed it.
+  const runFlushRef = useRef<(() => Promise<void>) | null>(null)
 
   const [mapReady, setMapReady] = useState(false)
   const [isDrawing, setIsDrawing] = useState(false)
@@ -1129,46 +1141,120 @@ export default function MapShell() {
     }
   }, [mapReady, brushing, applySelection])
 
+  // Cancel an armed retry. Called before arming a new one and whenever a flush starts, so
+  // there is never more than one timer in flight.
+  const cancelFlushRetry = useCallback(() => {
+    if (retryTimerRef.current !== null) {
+      clearTimeout(retryTimerRef.current)
+      retryTimerRef.current = null
+    }
+  }, [])
+
   const runFlush = useCallback(async () => {
-    if (!session || flushingRef.current) return
+    if (!session) return
+    // A request that arrives mid-flush is REMEMBERED, not dropped, and served by another
+    // pass below. Dropping it is precisely how a queue was stranded after an offline
+    // reload (task #44 — reproduced on Chromium with the app console captured, 1 failure
+    // in 16 isolated runs of tests/e2e/offline.spec.ts): the IndexedDB queue read landed
+    // BEFORE the browser fired `online`, so the flush already running was the offline
+    // one; the `online` request hit this guard and vanished; the offline attempt then
+    // failed against the network that was down when it started; and because a failed
+    // flush leaves both queue lengths unchanged, no dep the trigger effect watches ever
+    // transitioned again. Nothing re-fired, and the write never reached the server.
+    if (flushingRef.current) {
+      flushAgainRef.current = true
+      return
+    }
+    cancelFlushRetry()
     flushingRef.current = true
     setFlushing(true)
+    // Starts pessimistic: a reconcile that throws must err toward arming a retry, never
+    // toward silently deciding the queue is empty.
+    let queuedTotal = 1
     try {
-      await flushQueuedWrites((entry) =>
-        saveArea({ id: entry.id, geom: entry.geom, rating: entry.rating, comment: entry.comment }),
-      )
-      // Features flush in the same cycle, through their own write path. Not interleaved
-      // with the areas above: a feature that fails to flush must not leave an area
-      // queued behind it, and vice versa — each queue drains independently and whatever
-      // fails stays put (docs/OBJECTIVES.md § G4).
-      await flushQueuedFeatureWrites((entry) =>
-        saveFeature({
-          id: entry.id,
-          geom: entry.geom,
-          kind: entry.kind,
-          rating: entry.rating,
-          comment: entry.comment,
-        }),
-      )
+      // Another pass only when a request actually arrived mid-pass. This cannot spin:
+      // nothing inside the loop sets the flag, so each extra pass needs a fresh external
+      // call, and the only automatic caller — the trigger effect — fires on a queue-length
+      // transition, which a failing entry never produces.
+      do {
+        flushAgainRef.current = false
+        try {
+          const areaResult = await flushQueuedWrites((entry) =>
+            saveArea({ id: entry.id, geom: entry.geom, rating: entry.rating, comment: entry.comment }),
+          )
+          if (areaResult.flushed.length > 0) retryAttemptRef.current = 0
+          // Features flush in the same cycle, through their own write path. Not interleaved
+          // with the areas above: a feature that fails to flush must not leave an area
+          // queued behind it, and vice versa — each queue drains independently and whatever
+          // fails stays put (docs/OBJECTIVES.md § G4).
+          const featureResult = await flushQueuedFeatureWrites((entry) =>
+            saveFeature({
+              id: entry.id,
+              geom: entry.geom,
+              kind: entry.kind,
+              rating: entry.rating,
+              comment: entry.comment,
+            }),
+          )
+          if (featureResult.flushed.length > 0) retryAttemptRef.current = 0
+        } catch {
+          // Per-entry failures are already absorbed by the two flush helpers, so anything
+          // reaching here is a queue-read fault. It must not skip the reconcile below, and
+          // it must not leave `flushingRef` stuck true — that would wedge every future
+          // flush AND the Sync now button behind a guard nothing can clear.
+        }
+        // Reconcile what is left. Each read is guarded on its own: a failure here is a
+        // stale count at worst, and must never cost us the `finally` below.
+        try {
+          const remainingAreas = await listQueuedWrites()
+          const remainingFeatures = await listQueuedFeatureWrites()
+          queuedTotal = remainingAreas.length + remainingFeatures.length
+          setQueuedAreas(remainingAreas)
+          setQueuedMapFeatures(remainingFeatures)
+        } catch {
+          // Keep the counts we had; the next pass or the next save reconciles them.
+        }
+        try {
+          setAreas(await fetchAreas())
+        } catch {
+          // Stay with what we had; the next successful load reconciles.
+        }
+        try {
+          setMapFeatures(await fetchFeatures())
+        } catch {
+          // Same.
+        }
+      } while (flushAgainRef.current)
     } finally {
-      const remaining = await listQueuedWrites()
-      setQueuedAreas(remaining)
-      setQueuedMapFeatures(await listQueuedFeatureWrites())
-      try {
-        const fresh = await fetchAreas()
-        setAreas(fresh)
-      } catch {
-        // Stay with what we had; the next successful load reconciles.
-      }
-      try {
-        setMapFeatures(await fetchFeatures())
-      } catch {
-        // Same.
-      }
       flushingRef.current = false
       setFlushing(false)
+      // Arm the safety net. `shouldFlushOnSessionArrival` cannot see a failed flush —
+      // nothing it watches changed — so a pass that leaves work behind while the browser
+      // believes it is online is the only thing that knows a retry is owed.
+      const decision = nextFlushRetry({
+        online: navigator.onLine,
+        queuedTotal,
+        attempt: retryAttemptRef.current,
+      })
+      cancelFlushRetry()
+      if (decision.retry) {
+        retryAttemptRef.current += 1
+        retryTimerRef.current = setTimeout(() => {
+          retryTimerRef.current = null
+          void runFlushRef.current?.()
+        }, decision.delayMs)
+      }
     }
-  }, [session])
+  }, [session, cancelFlushRetry])
+
+  // The retry timer calls through this so it always reaches the latest `runFlush`.
+  useEffect(() => {
+    runFlushRef.current = runFlush
+  }, [runFlush])
+
+  // Nothing should outlive the map: an armed retry firing after unmount would set state on
+  // a dead component.
+  useEffect(() => cancelFlushRetry, [cancelFlushRetry])
 
   // Flush when a session ARRIVES with work still queued, not only when connectivity
   // returns. The `online` listener below is not enough on its own: after a reload taken
@@ -1196,6 +1282,9 @@ export default function MapShell() {
   // automation shouldn't be the only way to prove the flush works.
   useEffect(() => {
     function handleOnline() {
+      // A real reconnect earns a fresh backoff ladder: whatever exhausted the previous
+      // one was a different network.
+      retryAttemptRef.current = 0
       void runFlush()
     }
     window.addEventListener('online', handleOnline)

@@ -35,3 +35,42 @@ export function shouldFlushOnSessionArrival(inputs: FlushTriggerInputs): boolean
   if (!inputs.hasSession) return false
   return inputs.queuedAreas + inputs.queuedFeatures > 0
 }
+
+// ---------------------------------------------------------------------------
+// When a flush that left work behind should be tried again.
+//
+// `shouldFlushOnSessionArrival` above answers "has something changed that makes a flush
+// worth starting". That question has a blind spot, and it is the one that stranded a
+// queue after an offline reload: a FAILED flush changes nothing. The queue lengths are
+// identical, the session is identical, `mapReady` is identical — so the effect watching
+// those deps does not re-run, and if the `online` edge has already been spent there is
+// nothing left to re-fire the flush. The queue then sits there claiming it "will sync"
+// forever, which is data loss dressed as a banner.
+//
+// So a flush that leaves entries queued while the browser believes it is online arms its
+// own retry. Bounded, not perpetual: a write the server genuinely rejects would otherwise
+// be re-sent every few seconds for the lifetime of the tab. The attempt counter resets on
+// the next `online` edge and on any pass that actually drains something, so a real
+// reconnect always gets a fresh ladder.
+const RETRY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000]
+
+export type FlushRetryInputs = {
+  /** `navigator.onLine`. Offline, the `online` event is the trigger; no timer needed. */
+  online: boolean
+  /** Entries still in both queues after the pass that just finished. */
+  queuedTotal: number
+  /** Retries already spent in this episode. */
+  attempt: number
+}
+
+export type FlushRetryDecision = { retry: false } | { retry: true; delayMs: number }
+
+export function nextFlushRetry(inputs: FlushRetryInputs): FlushRetryDecision {
+  if (inputs.queuedTotal <= 0) return { retry: false }
+  // Offline there is nothing to retry INTO, and the `online` event will drive the flush
+  // the moment connectivity returns. Burning the ladder against a disconnected network
+  // would leave nothing for the reconnect that actually matters.
+  if (!inputs.online) return { retry: false }
+  if (inputs.attempt < 0 || inputs.attempt >= RETRY_BACKOFF_MS.length) return { retry: false }
+  return { retry: true, delayMs: RETRY_BACKOFF_MS[inputs.attempt] }
+}
