@@ -216,3 +216,86 @@ test('an enabled overlay still paints with the network blocked', async ({ page, 
   )
   expect(unexpected).toEqual([])
 })
+
+// Reference layers are a *view* control, not a mode. Turning parks or noise on while
+// outlining an area is exactly when you want them, so the way in has to survive an open
+// session rather than being bundled with the mode-entry buttons that correctly disappear.
+//
+// The adversarial sweep read this as a hang: a click on the sheet's toggle "timed out at
+// 150s". It was not a wedged page — the control was unmounted, so Playwright waited for
+// an element that was never coming. Assert on presence, which is what actually broke.
+
+/** Three vertices placed, ring left open — a drawing session in progress. */
+async function startDrawing(page: Page) {
+  await tap(page.getByTestId('start-drawing'))
+  const box = await page.locator('.maplibregl-canvas').boundingBox()
+  if (!box) throw new Error('no canvas')
+  const cx = box.x + box.width / 2
+  const cy = box.y + box.height / 2
+  for (const [dx, dy] of [
+    [-80, -60],
+    [60, -60],
+    [60, 50],
+  ]) {
+    await tapAt(page, cx + dx, cy + dy)
+  }
+  await expect(page.getByTestId('finish-area')).toBeVisible()
+}
+
+test('the overlay sheet is reachable mid-draw, and toggling one leaves the session intact', async ({
+  page,
+}) => {
+  await openMap(page)
+  await enable(page, 'tfl-stops')
+  await expect.poll(() => renderedCount(page, 'tfl-stops-circle'), { timeout: 20_000 })
+    .toBeGreaterThan(0)
+  // Closed, so reaching the second overlay has to go through the toggle again — the step
+  // the sweep could not complete.
+  await tap(page.getByTestId('overlay-sheet-toggle'))
+  await expect(page.getByTestId('overlay-sheet')).toBeHidden()
+
+  await startDrawing(page)
+
+  await expect(page.getByTestId('overlay-sheet-toggle')).toBeVisible()
+  await tap(page.getByTestId('overlay-sheet-toggle'))
+  await expect(page.getByTestId('overlay-sheet')).toBeVisible()
+
+  await tap(page.getByTestId('overlay-toggle-greenspace'))
+  await expect(page.getByTestId('overlay-toggle-greenspace')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await expect.poll(() => renderedCount(page, 'greenspace-fill'), { timeout: 20_000 })
+    .toBeGreaterThan(0)
+
+  // Both overlays are on and still under the annotations, and the half-drawn ring is
+  // still a session: mutating the style mid-draw must not have ended it.
+  expect(await layerIndex(page, 'greenspace-fill')).toBeLessThan(
+    await layerIndex(page, 'saved-areas-fill'),
+  )
+  await expect(page.getByTestId('finish-area')).toBeVisible()
+  await expect(page.getByTestId('undo-vertex')).toBeVisible()
+})
+
+test('the overlay sheet is reachable in every other open session too', async ({ page }) => {
+  await openMap(page)
+  const layers = page.getByTestId('overlay-sheet-toggle')
+
+  await tap(page.getByTestId('start-point'))
+  await expect(page.getByTestId('point-hint')).toBeVisible()
+  await expect(layers).toBeVisible()
+  await tap(page.getByTestId('cancel-feature'))
+
+  await tap(page.getByTestId('start-line'))
+  await expect(page.getByTestId('finish-line')).toBeVisible()
+  await expect(layers).toBeVisible()
+  await tap(page.getByTestId('cancel-feature'))
+
+  await tap(page.getByTestId('start-brush'))
+  await expect(page.getByTestId('exit-brush')).toBeVisible()
+  await expect(layers).toBeVisible()
+  await tap(page.getByTestId('exit-brush'))
+
+  await expect(page.getByTestId('start-drawing')).toBeVisible()
+  await expect(layers).toBeVisible()
+})
