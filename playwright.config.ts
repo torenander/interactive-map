@@ -61,6 +61,7 @@ export default defineConfig({
         'offline-map.spec.ts',
         'perf-load.spec.ts',
         'points-lines.spec.ts',
+        'move-precedence.spec.ts',
         'draw-precision.spec.ts',
         'brush.spec.ts',
         'overlays.spec.ts',
