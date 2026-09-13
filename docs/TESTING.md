@@ -28,6 +28,9 @@ required, see the G11 amendment in `docs/OBJECTIVES.md`).
 - MapLibre rendering internals
 - Tile loading and pmtiles range requests
 - Terra Draw internals
+- Sign-in against the hosted project in Playwright's bundled WebKit — the token POST dies
+  with a transport error there (no preflight even sent); verified working on real iPhone
+  Safari (2026-09-13), Chromium, and curl, so it is a bundled-WebKit artifact, not app CORS.
 
 **Accepted risk** — unauthenticated PostgREST error responses (42501/PGRST204) disclose
 table and column names. Accepted: the same names ship in the public JS bundle, no data
