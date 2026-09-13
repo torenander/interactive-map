@@ -1811,6 +1811,32 @@ export default function MapShell() {
           </div>
         )}
 
+        {/* Reference layers are a view control, not a mode, so this sits outside the
+            mode-entry cluster below and stays put while a session is open. It used to
+            live in that cluster, which unmounts the moment you start drawing, painting
+            or placing — and turning parks or noise on while outlining an area is exactly
+            when you want them. An adversarial sweep read the missing button as a hung
+            page (a click that "timed out at 150s"); the page was fine, the control was
+            gone.
+
+            Hidden only under the rating modal, which is `fixed inset-0 z-40` with a
+            backdrop: anything left rendered under it is unreachable anyway, and a
+            visible-but-dead button is worse than no button. */}
+        {!showRatingModal && (
+          <button
+            type="button"
+            data-testid="overlay-sheet-toggle"
+            aria-pressed={overlaySheetOpen}
+            onClick={() => setOverlaySheetOpen((open) => !open)}
+            className="flex min-h-11 items-center justify-center rounded-full bg-white px-4 text-sm font-medium text-gray-900 shadow"
+          >
+            Layers
+            {enabledOverlays.length > 0 && (
+              <span className="ml-1 text-xs text-blue-700">{enabledOverlays.length}</span>
+            )}
+          </button>
+        )}
+
         {/* Sits with the brush controls rather than in the top band: it is about the
             stroke that just happened, and the rating sheet covers the top of the screen.
             The cap message wins over the disconnected one — at the cap, painting the gap
@@ -1978,6 +2004,8 @@ export default function MapShell() {
           !brushing &&
           featureMode === null && (
             // Four entry points at 390px: two rows rather than one scrolling line.
+            // Layers is not among them — it is a view control and is rendered above,
+            // outside this branch, so it survives the session these buttons start.
             <div className="flex flex-wrap items-center justify-center gap-2">
               <button
                 type="button"
@@ -1995,18 +2023,6 @@ export default function MapShell() {
                 className="rounded-full bg-blue-600 px-5 py-3 text-base font-medium text-white shadow disabled:opacity-60"
               >
                 {brushLoading ? 'Loading…' : 'Paint area'}
-              </button>
-              <button
-                type="button"
-                data-testid="overlay-sheet-toggle"
-                aria-pressed={overlaySheetOpen}
-                onClick={() => setOverlaySheetOpen((open) => !open)}
-                className="flex min-h-11 items-center justify-center rounded-full bg-white px-4 text-sm font-medium text-gray-900 shadow"
-              >
-                Layers
-                {enabledOverlays.length > 0 && (
-                  <span className="ml-1 text-xs text-blue-700">{enabledOverlays.length}</span>
-                )}
               </button>
               <button
                 type="button"
