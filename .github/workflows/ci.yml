@@ -101,8 +101,16 @@ jobs:
       #
       # Splitting also keeps a failure attributable: one step per project says which
       # lane broke without reading the matrix.
+      # --workers=1 for the same reason the desktop step below has it: default
+      # parallelism failed on merit, not on this diff. PR #6 (an overlay-URL-only
+      # change) hit three distinct marginal [mobile] failures across two
+      # consecutive runs at default workers — touch-draw.spec.ts:72 flaky on the
+      # first run, move-precedence.spec.ts:266 hard-failed and :210 flaky on the
+      # re-run — 43 tests at 2 workers on GitHub's 2-core runner (workflow id
+      # 34889485880). Not reproducible locally on a 10-core machine, which is
+      # itself the signature of a contention bug rather than a logic bug.
       - name: Gate — npm run test:e2e (mobile project)
-        run: npm run test:e2e -- --project=mobile 2>&1 | tee /tmp/e2e-mobile.log; exit ${PIPESTATUS[0]}
+        run: npm run test:e2e -- --project=mobile --workers=1 2>&1 | tee /tmp/e2e-mobile.log; exit ${PIPESTATUS[0]}
 
       # --workers=1 per docs/OBJECTIVES.md § G11's amended done_when. The flag is the
       # gate, not a speed knob: without it this lane fails intermittently on merit,
