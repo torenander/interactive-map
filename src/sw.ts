@@ -138,11 +138,13 @@ registerRoute(
 // The expiration plugin caps the cache rather than the age — an overlay a user
 // keeps switched on should not stop working offline because a month passed,
 // but a registry that grows should not grow the cache without limit either.
+const OVERLAYS_PATH = `${import.meta.env.BASE_URL}overlays/`
+
 registerRoute(
   ({ url, request }) =>
     request.method === 'GET' &&
     url.origin === self.location.origin &&
-    url.pathname.startsWith('/overlays/'),
+    url.pathname.startsWith(OVERLAYS_PATH),
   new CacheFirst({
     cacheName: 'overlays-v1',
     plugins: [

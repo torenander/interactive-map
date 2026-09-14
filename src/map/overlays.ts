@@ -25,7 +25,8 @@ export type Overlay = {
   /** What the toggle says. Carries the extent or threshold when the data is filtered,
    *  so the sheet never implies more coverage than the file has. */
   readonly label: string
-  /** Path on this origin, under public/. Never an absolute URL. */
+  /** Path on this origin, under public/overlays/, prefixed with the build base
+   *  (import.meta.env.BASE_URL) so it resolves under a subpath deploy. Never an absolute URL. */
   readonly source: string
   /** Attribution required by the source's licence. Rendered on the map while the
    *  overlay is on, beside the OpenStreetMap attribution, which is always there. */
@@ -50,7 +51,7 @@ export const OVERLAYS: readonly Overlay[] = [
   {
     id: 'tfl-stops',
     label: 'Stations and stops',
-    source: '/overlays/tfl-stops.geojson',
+    source: `${import.meta.env.BASE_URL}overlays/tfl-stops.geojson`,
     attribution: 'Powered by TfL Open Data',
     layers: [
       {
@@ -71,7 +72,7 @@ export const OVERLAYS: readonly Overlay[] = [
   {
     id: 'greenspace',
     label: 'Green space',
-    source: '/overlays/greenspace.geojson',
+    source: `${import.meta.env.BASE_URL}overlays/greenspace.geojson`,
     attribution: 'Contains OS data © Crown copyright and database right 2026',
     layers: [
       {
@@ -96,7 +97,7 @@ export const OVERLAYS: readonly Overlay[] = [
     // bands are extracted. Saying "road noise" flat would imply the quiet bands are in
     // it and that an unshaded street has been measured as quiet.
     label: 'Road noise, 70 dB+',
-    source: '/overlays/road-noise.geojson',
+    source: `${import.meta.env.BASE_URL}overlays/road-noise.geojson`,
     attribution:
       'Contains public sector information licensed under the Open Government Licence v3.0 (Defra)',
     layers: [
