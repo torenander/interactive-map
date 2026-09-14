@@ -308,6 +308,20 @@ One thing left unexplained rather than theorised: runs 7-10 completed in 50-54 s
 1.1-1.6 m for runs 2-6, under nominally identical load. Thermal or scheduler behaviour is a
 guess, and a guess in this file is worth less than the admission.
 
+### Amended: the CI runner's two cores turned that same exposure into gate noise
+
+The measurement above informed a decision — mobile stays uncapped — that described the
+wrong machine. It was taken on a ten-core machine; GitHub's CI runner has two. PR #6, an
+overlay-URL-only change with no reason to be flaky, hit three distinct marginal `[mobile]`
+failures across two consecutive CI runs at default workers: `touch-draw.spec.ts:72` flaky on
+the first run, `move-precedence.spec.ts:266` hard-failed and `:210` flaky on the re-run
+(workflow id 34889485880). Not reproducible locally on a ten-plus-core machine, which is
+itself the signature of contention rather than a logic bug — the same signature the desktop
+lane already carries.
+
+`ci.yml` now runs the mobile gate at `--workers=1`, same as desktop. The measurement above
+stays accurate for what it measured; it just was not measuring the machine the gate runs on.
+
 ### CI fails a build when a test passes only on retry
 
 `playwright.config.ts` sets `retries: 2` under CI, so without a check a flaky-then-passed
